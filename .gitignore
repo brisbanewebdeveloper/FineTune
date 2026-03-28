@@ -14,7 +14,8 @@ tools/
 *.xcworkspace/xcuserdata/
 
 # Tests (excluded from v1.0)
-FineTuneTests/
+FineTuneTests/*
+!FineTuneTests/*.swift
 FineTuneUITests/
 __Snapshots__/
 
