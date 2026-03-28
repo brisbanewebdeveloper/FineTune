@@ -18,6 +18,7 @@ protocol ProcessTapControlling: AnyObject {
     func activate() throws
     func invalidate()
     func invalidateAsync() async
+    func updateCompressorSettings(_ settings: CompressorSettings)
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)

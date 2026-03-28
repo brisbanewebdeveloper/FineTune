@@ -78,6 +78,7 @@ final class SettingsManager {
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
+        var appCompressorSettings: [String: CompressorSettings] = [:]  // bundleID → compressor settings
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
@@ -115,6 +116,7 @@ final class SettingsManager {
             appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
+            appCompressorSettings = try c.decodeIfPresent([String: CompressorSettings].self, forKey: .appCompressorSettings) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
             if !decodedAppSettings.defaultNewAppVolume.isFinite || decodedAppSettings.defaultNewAppVolume < 0 {
@@ -212,6 +214,15 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    func getCompressorSettings(for appIdentifier: String) -> CompressorSettings {
+        settings.appCompressorSettings[appIdentifier] ?? .bypassed
+    }
+
+    func setCompressorSettings(_ compressorSettings: CompressorSettings, for appIdentifier: String) {
+        settings.appCompressorSettings[appIdentifier] = compressorSettings
+        scheduleSave()
+    }
+
     func getEQSettings(for appIdentifier: String) -> EQSettings {
         return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
     }
@@ -299,6 +310,7 @@ final class SettingsManager {
         settings.appVolumes.removeValue(forKey: identifier)
         settings.appBoosts.removeValue(forKey: identifier)
         settings.appMutes.removeValue(forKey: identifier)
+        settings.appCompressorSettings.removeValue(forKey: identifier)
         settings.appDeviceRouting.removeValue(forKey: identifier)
         settings.appEQSettings.removeValue(forKey: identifier)
         settings.appDeviceSelectionMode.removeValue(forKey: identifier)
@@ -454,6 +466,7 @@ final class SettingsManager {
         let allIdentifiers = Set(settings.appVolumes.keys)
             .union(settings.appBoosts.keys)
             .union(settings.appMutes.keys)
+            .union(settings.appCompressorSettings.keys)
             .union(settings.appEQSettings.keys)
             .union(settings.appDeviceSelectionMode.keys)
             .union(settings.appSelectedDeviceUIDs.keys)
@@ -470,6 +483,7 @@ final class SettingsManager {
             // Check if all remaining settings are default values
             let volume = settings.appVolumes[identifier]
             let mute = settings.appMutes[identifier]
+            let compressor = settings.appCompressorSettings[identifier]
             let eq = settings.appEQSettings[identifier]
             let selectionMode = settings.appDeviceSelectionMode[identifier]
             let selectedUIDs = settings.appSelectedDeviceUIDs[identifier]
@@ -479,11 +493,12 @@ final class SettingsManager {
             let isDefaultVolume = volume == nil || volume == 1.0
             let isDefaultBoost = boost == nil || boost == BoostLevel.x1.rawValue
             let isDefaultMute = mute == nil || mute == false
+            let isDefaultCompressor = compressor == nil || compressor == .bypassed
             let isDefaultEQ = eq == nil || eq == .flat
             let isDefaultSelectionMode = selectionMode == nil
             let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
 
-            guard isDefaultVolume && isDefaultBoost && isDefaultMute && isDefaultEQ
+            guard isDefaultVolume && isDefaultBoost && isDefaultMute && isDefaultCompressor && isDefaultEQ
                     && isDefaultSelectionMode && isDefaultSelectedUIDs else {
                 continue
             }
@@ -492,6 +507,7 @@ final class SettingsManager {
             settings.appVolumes.removeValue(forKey: identifier)
             settings.appBoosts.removeValue(forKey: identifier)
             settings.appMutes.removeValue(forKey: identifier)
+            settings.appCompressorSettings.removeValue(forKey: identifier)
             settings.appEQSettings.removeValue(forKey: identifier)
             settings.appDeviceSelectionMode.removeValue(forKey: identifier)
             settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
@@ -583,6 +599,7 @@ final class SettingsManager {
         settings.appBoosts.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
+        settings.appCompressorSettings.removeAll()
         settings.appEQSettings.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
@@ -616,7 +633,7 @@ final class SettingsManager {
         do {
             let data = try Data(contentsOf: settingsURL)
             settings = try JSONDecoder().decode(Settings.self, from: data)
-            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appEQSettings.count) EQ settings")
+            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appCompressorSettings.count) compressor settings, \(self.settings.appEQSettings.count) EQ settings")
         } catch {
             logger.error("Failed to load settings: \(error.localizedDescription)")
             // Backup corrupted file before resetting

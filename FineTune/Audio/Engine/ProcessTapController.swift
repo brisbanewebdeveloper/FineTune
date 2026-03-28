@@ -103,11 +103,13 @@ final class ProcessTapController: ProcessTapControlling {
     /// Default 0.0007 corresponds to ~30ms ramp at 48kHz. Prevents clicks on volume changes.
     private nonisolated(unsafe) var rampCoefficient: Float = 0.0007
     private nonisolated(unsafe) var secondaryRampCoefficient: Float = 0.0007
+    private nonisolated(unsafe) var compressorProcessor: MultiBandCompressorProcessor?
     private nonisolated(unsafe) var eqProcessor: EQProcessor?
     private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
+    private nonisolated(unsafe) var secondaryCompressorProcessor: MultiBandCompressorProcessor?
     private nonisolated(unsafe) var secondaryEQProcessor: EQProcessor?
     private nonisolated(unsafe) var secondaryAutoEQProcessor: AutoEQProcessor?
 
@@ -215,6 +217,11 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     // MARK: - Public Methods
+
+    func updateCompressorSettings(_ settings: CompressorSettings) {
+        compressorProcessor?.updateSettings(settings)
+        secondaryCompressorProcessor?.updateSettings(settings)
+    }
 
     func updateEQSettings(_ settings: EQSettings) {
         eqProcessor?.updateSettings(settings)
@@ -417,6 +424,7 @@ final class ProcessTapController: ProcessTapControlling {
         rampCoefficient = 1 - exp(-1 / (Float(sampleRate) * rampTimeSeconds))
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
+        compressorProcessor = MultiBandCompressorProcessor(sampleRate: sampleRate)
         eqProcessor = EQProcessor(sampleRate: sampleRate)
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
 
@@ -611,8 +619,9 @@ final class ProcessTapController: ProcessTapControlling {
         return true
     }
 
-    /// Shared epilogue for invalidation. Clears EQ state and resets the reentrant guard.
+    /// Shared epilogue for invalidation. Clears per-tap effect state and resets the reentrant guard.
     private func endInvalidation() {
+        secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
         _invalidating = false
@@ -765,6 +774,12 @@ final class ProcessTapController: ProcessTapControlling {
         // Create independent EQ processors for the secondary tap.
         // Each tap needs its own biquad delay buffers — sharing would corrupt filter state
         // because both callbacks run concurrently on different HAL I/O threads.
+        let secCompressor = MultiBandCompressorProcessor(sampleRate: sampleRate)
+        if let settings = compressorProcessor?.currentSettings {
+            secCompressor.updateSettings(settings)
+        }
+        secondaryCompressorProcessor = secCompressor
+
         let secEQ = EQProcessor(sampleRate: sampleRate)
         if let settings = eqProcessor?.currentSettings {
             secEQ.updateSettings(settings)
@@ -814,6 +829,7 @@ final class ProcessTapController: ProcessTapControlling {
         guard secondaryResources.isActive else { return }
         _secondaryCallbackID = 0
         secondaryResources.destroy()
+        secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
     }
@@ -830,18 +846,22 @@ final class ProcessTapController: ProcessTapControlling {
         // Adopt secondary EQ processors as primary.
         // The old primary processors may still be referenced by a just-completed primary callback,
         // so defer their deallocation to ensure no use-after-free on the RT thread.
+        let oldCompressor = compressorProcessor
         let oldEQ = eqProcessor
         let oldAutoEQ = autoEQProcessor
+        compressorProcessor = secondaryCompressorProcessor
         eqProcessor = secondaryEQProcessor
         autoEQProcessor = secondaryAutoEQProcessor
+        secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
 
         // Deferred cleanup: hold old processors alive briefly so any in-flight RT callback
         // that read the pointer before the swap finishes its buffer without accessing freed memory.
         // 0.5s is conservative — audio callbacks run at ~5ms intervals.
-        if oldEQ != nil || oldAutoEQ != nil {
+        if oldCompressor != nil || oldEQ != nil || oldAutoEQ != nil {
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                _ = oldCompressor
                 _ = oldEQ
                 _ = oldAutoEQ
             }
@@ -973,6 +993,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
+            compressorProcessor?.updateSampleRate(deviceSampleRate)
             eqProcessor?.updateSampleRate(deviceSampleRate)
             autoEQProcessor?.updateSampleRate(deviceSampleRate)
         }
@@ -992,6 +1013,7 @@ final class ProcessTapController: ProcessTapControlling {
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
         currentVol: inout Float,
+        compressorProc: MultiBandCompressorProcessor?,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?
     ) {
@@ -1038,17 +1060,31 @@ final class ProcessTapController: ProcessTapControlling {
             let safeLeft = min(max(preferredStereoLeft, 0), max(outputChannels - 1, 0))
             let safeRight = min(max(preferredStereoRight, 0), max(outputChannels - 1, 0))
 
+            let compressor = compressorProc
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
 
             if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier
-                    let base = frame * inputChannels
-                    for ch in 0..<inputChannels {
-                        outputSamples[base + ch] = inputSamples[base + ch] * gain
+                if inputChannels == 2 {
+                    for frame in 0..<frameCount {
+                        currentVol += (targetVol - currentVol) * rampCoefficient
+                        let gain = currentVol * crossfadeMultiplier
+                        let base = frame * 2
+                        var left = inputSamples[base] * gain
+                        var right = inputSamples[base + 1] * gain
+                        compressor?.processStereoFrame(left: &left, right: &right)
+                        outputSamples[base] = left
+                        outputSamples[base + 1] = right
+                    }
+                } else {
+                    for frame in 0..<frameCount {
+                        currentVol += (targetVol - currentVol) * rampCoefficient
+                        let gain = currentVol * crossfadeMultiplier
+                        let base = frame * inputChannels
+                        for ch in 0..<inputChannels {
+                            outputSamples[base + ch] = inputSamples[base + ch] * gain
+                        }
                     }
                 }
                 if sampleCount < outputSampleCount {
@@ -1060,8 +1096,9 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
-                    let left = inputSamples[inBase] * gain
-                    let right = inputSamples[inBase + 1] * gain
+                    var left = inputSamples[inBase] * gain
+                    var right = inputSamples[inBase + 1] * gain
+                    compressor?.processStereoFrame(left: &left, right: &right)
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -1077,14 +1114,16 @@ final class ProcessTapController: ProcessTapControlling {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
                     let gain = currentVol * crossfadeMultiplier
-                    let sample = inputSamples[frame] * gain
+                    var left = inputSamples[frame] * gain
+                    var right = left
+                    compressor?.processStereoFrame(left: &left, right: &right)
                     let outBase = frame * outputChannels
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
                     }
-                    outputSamples[outBase + safeLeft] = sample
-                    outputSamples[outBase + safeRight] = sample
+                    outputSamples[outBase + safeLeft] = left
+                    outputSamples[outBase + safeRight] = right
                 }
                 let writtenSamples = frameCount * outputChannels
                 if writtenSamples < outputSampleCount {
@@ -1218,6 +1257,7 @@ final class ProcessTapController: ProcessTapControlling {
         let rampCoeff: Float
         let stereoLeft: Int
         let stereoRight: Int
+        let compressorProc: MultiBandCompressorProcessor?
         let eqProc: EQProcessor?
         let autoEQProc: AutoEQProcessor?
 
@@ -1230,6 +1270,7 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoeff = rampCoefficient
             stereoLeft = _primaryPreferredStereoLeftChannel
             stereoRight = _primaryPreferredStereoRightChannel
+            compressorProc = compressorProcessor
             eqProc = eqProcessor
             autoEQProc = autoEQProcessor
         } else {
@@ -1240,6 +1281,7 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoeff = secondaryRampCoefficient
             stereoLeft = _secondaryPreferredStereoLeftChannel
             stereoRight = _secondaryPreferredStereoRightChannel
+            compressorProc = secondaryCompressorProcessor
             eqProc = secondaryEQProcessor
             autoEQProc = secondaryAutoEQProcessor
         }
@@ -1253,6 +1295,7 @@ final class ProcessTapController: ProcessTapControlling {
             preferredStereoLeft: stereoLeft,
             preferredStereoRight: stereoRight,
             currentVol: &currentVol,
+            compressorProc: compressorProc,
             eqProc: eqProc,
             autoEQProc: autoEQProc
         )
