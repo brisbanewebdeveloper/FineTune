@@ -8,7 +8,7 @@ import Darwin.C
 /// Each range uses independent envelope tracking, downward compression, and
 /// fixed makeup gain so quieter content is lifted while louder peaks are reduced.
 final class MultiBandCompressorProcessor: @unchecked Sendable {
-    /// Snapshot of RT-readable compressor parameters for a single callback/buffer pass.
+    /// Snapshot of real-time-readable compressor parameters for a single callback/buffer pass.
     /// The pointed-to storage remains owned by the processor and must only be used while
     /// the processor instance is alive, from the active callback/buffer pass that requested
     /// the snapshot, and not retained across subsequent main-thread settings/sample-rate updates.
