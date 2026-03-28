@@ -8,6 +8,15 @@ import Darwin.C
 /// Each range uses independent envelope tracking, downward compression, and
 /// fixed makeup gain so quieter content is lifted while louder peaks are reduced.
 final class MultiBandCompressorProcessor: @unchecked Sendable {
+    struct ProcessingState {
+        let crossoverAlphas: UnsafeMutablePointer<Float>
+        let thresholds: UnsafeMutablePointer<Float>
+        let ratios: UnsafeMutablePointer<Float>
+        let makeupGains: UnsafeMutablePointer<Float>
+        let attackCoefficient: Float
+        let releaseCoefficient: Float
+    }
+
     private(set) var sampleRate: Double
     private var _currentSettings: CompressorSettings?
 
@@ -104,24 +113,36 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     }
 
     func processStereoFrame(left: inout Float, right: inout Float) {
-        guard _isEnabled else { return }
+        guard let state = processingState() else { return }
+        processStereoFrame(left: &left, right: &right, state: state)
+    }
+
+    @inline(__always)
+    func processingState() -> ProcessingState? {
+        guard _isEnabled else { return nil }
         OSMemoryBarrier()
+        return ProcessingState(
+            crossoverAlphas: crossoverAlphas,
+            thresholds: thresholds,
+            ratios: ratios,
+            makeupGains: makeupGains,
+            attackCoefficient: _attackCoefficient,
+            releaseCoefficient: _releaseCoefficient
+        )
+    }
 
-        let attackCoefficient = _attackCoefficient
-        let releaseCoefficient = _releaseCoefficient
-
+    @inline(__always)
+    func processStereoFrame(left: inout Float, right: inout Float, state: ProcessingState) {
         left = processSample(
             left,
-            attackCoefficient: attackCoefficient,
-            releaseCoefficient: releaseCoefficient,
+            state: state,
             states: statesL,
             envelopes: envelopesL
         )
 
         right = processSample(
             right,
-            attackCoefficient: attackCoefficient,
-            releaseCoefficient: releaseCoefficient,
+            state: state,
             states: statesR,
             envelopes: envelopesR
         )
@@ -135,8 +156,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
     private func processSample(
         _ sample: Float,
-        attackCoefficient: Float,
-        releaseCoefficient: Float,
+        state: ProcessingState,
         states: UnsafeMutablePointer<Float>,
         envelopes: UnsafeMutablePointer<Float>
     ) -> Float {
@@ -144,16 +164,16 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         var previousLowpass: Float = 0.0
 
         for index in 0..<MultiBandCompressionMath.crossoverCount {
-            states[index] += crossoverAlphas[index] * (sample - states[index])
+            states[index] += state.crossoverAlphas[index] * (sample - states[index])
             let lowpass = states[index]
             let bandSample = lowpass - previousLowpass
             output += compressBand(
                 bandSample,
-                threshold: thresholds[index],
-                ratio: ratios[index],
-                makeupGain: makeupGains[index],
-                attackCoefficient: attackCoefficient,
-                releaseCoefficient: releaseCoefficient,
+                threshold: state.thresholds[index],
+                ratio: state.ratios[index],
+                makeupGain: state.makeupGains[index],
+                attackCoefficient: state.attackCoefficient,
+                releaseCoefficient: state.releaseCoefficient,
                 envelope: &envelopes[index]
             )
             previousLowpass = lowpass
@@ -161,11 +181,11 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
         output += compressBand(
             sample - previousLowpass,
-            threshold: thresholds[MultiBandCompressionMath.bandCount - 1],
-            ratio: ratios[MultiBandCompressionMath.bandCount - 1],
-            makeupGain: makeupGains[MultiBandCompressionMath.bandCount - 1],
-            attackCoefficient: attackCoefficient,
-            releaseCoefficient: releaseCoefficient,
+            threshold: state.thresholds[MultiBandCompressionMath.bandCount - 1],
+            ratio: state.ratios[MultiBandCompressionMath.bandCount - 1],
+            makeupGain: state.makeupGains[MultiBandCompressionMath.bandCount - 1],
+            attackCoefficient: state.attackCoefficient,
+            releaseCoefficient: state.releaseCoefficient,
             envelope: &envelopes[MultiBandCompressionMath.bandCount - 1]
         )
 

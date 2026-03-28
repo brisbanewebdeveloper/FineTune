@@ -4,6 +4,39 @@ import AudioToolbox
 
 final class ProcessTapControllerProcessingTests: XCTestCase {
     @MainActor
+    func testCompressorProcessingStateMatchesPerFrameAPI() {
+        let settings = CompressorSettings(isEnabled: true, amount: 1.0)
+        let perFrameCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
+        perFrameCompressor.updateSettings(settings)
+
+        let bufferedCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
+        bufferedCompressor.updateSettings(settings)
+        let bufferedState = try XCTUnwrap(bufferedCompressor.processingState())
+
+        var perFrameSamples: [Float] = [0.05, -0.04, 0.8, -0.7, 0.08, -0.09, 0.9, -0.85]
+        var bufferedSamples = perFrameSamples
+
+        for frame in stride(from: 0, to: perFrameSamples.count, by: 2) {
+            var perFrameLeft = perFrameSamples[frame]
+            var perFrameRight = perFrameSamples[frame + 1]
+            perFrameCompressor.processStereoFrame(left: &perFrameLeft, right: &perFrameRight)
+            perFrameSamples[frame] = perFrameLeft
+            perFrameSamples[frame + 1] = perFrameRight
+
+            var bufferedLeft = bufferedSamples[frame]
+            var bufferedRight = bufferedSamples[frame + 1]
+            bufferedCompressor.processStereoFrame(left: &bufferedLeft, right: &bufferedRight, state: bufferedState)
+            bufferedSamples[frame] = bufferedLeft
+            bufferedSamples[frame + 1] = bufferedRight
+        }
+
+        XCTAssertEqual(perFrameSamples.count, bufferedSamples.count)
+        for (perFrame, buffered) in zip(perFrameSamples, bufferedSamples) {
+            XCTAssertEqual(perFrame, buffered, accuracy: 0.000_001)
+        }
+    }
+
+    @MainActor
     func testProcessMappedBuffersAppliesEQAfterCompression() {
         var inputSamples: [Float] = [
             0.05, 0.05,
@@ -70,6 +103,7 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
         var expectedSamples = inputSamples
         let expectedCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
         expectedCompressor.updateSettings(compressorSettings)
+        let expectedCompressorState = expectedCompressor.processingState()
         let expectedEQ = EQProcessor(sampleRate: 48_000)
         expectedEQ.updateSettings(eqSettings)
 
@@ -82,7 +116,9 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
             for frame in stride(from: 0, to: expectedSamples.count, by: 2) {
                 var left = baseAddress[frame]
                 var right = baseAddress[frame + 1]
-                expectedCompressor.processStereoFrame(left: &left, right: &right)
+                if let expectedCompressorState {
+                    expectedCompressor.processStereoFrame(left: &left, right: &right, state: expectedCompressorState)
+                }
                 baseAddress[frame] = left
                 baseAddress[frame + 1] = right
             }

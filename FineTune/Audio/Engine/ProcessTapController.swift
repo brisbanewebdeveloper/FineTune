@@ -1061,6 +1061,7 @@ final class ProcessTapController: ProcessTapControlling {
             let safeRight = min(max(preferredStereoRight, 0), max(outputChannels - 1, 0))
 
             let compressor = compressorProc
+            let compressorState = compressor?.processingState()
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
 
@@ -1075,7 +1076,9 @@ final class ProcessTapController: ProcessTapControlling {
                         let base = frame * 2
                         var left = inputSamples[base] * gain
                         var right = inputSamples[base + 1] * gain
-                        compressor?.processStereoFrame(left: &left, right: &right)
+                        if let compressor, let compressorState {
+                            compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
+                        }
                         outputSamples[base] = left
                         outputSamples[base + 1] = right
                     }
@@ -1102,7 +1105,9 @@ final class ProcessTapController: ProcessTapControlling {
                     let outBase = frame * outputChannels
                     var left = inputSamples[inBase] * gain
                     var right = inputSamples[inBase + 1] * gain
-                    compressor?.processStereoFrame(left: &left, right: &right)
+                    if let compressor, let compressorState {
+                        compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
+                    }
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -1122,7 +1127,9 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier
                     var left = inputSamples[frame] * gain
                     var right = left
-                    compressor?.processStereoFrame(left: &left, right: &right)
+                    if let compressor, let compressorState {
+                        compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
+                    }
                     let outBase = frame * outputChannels
 
                     for ch in 0..<outputChannels {
