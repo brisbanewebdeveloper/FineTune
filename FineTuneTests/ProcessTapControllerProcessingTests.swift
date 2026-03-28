@@ -142,6 +142,7 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
             }
 
             expectedEQ.process(input: baseAddress, output: baseAddress, frameCount: expectedSamples.count / 2)
+            SoftLimiter.processBuffer(baseAddress, sampleCount: expectedSamples.count)
         }
 
         XCTAssertEqual(outputSamples.count, expectedSamples.count)
