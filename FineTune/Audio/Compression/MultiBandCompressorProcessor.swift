@@ -1,10 +1,11 @@
 import Foundation
 import Darwin.C
 
-/// RT-safe 3-band compressor for per-source dynamic range control.
+/// RT-safe 10-band compressor for per-source dynamic range control.
 ///
-/// The signal is split into low / mid / high bands with two one-pole crossovers.
-/// Each band uses independent envelope tracking, downward compression, and
+/// The signal is split into ranges aligned to the EQ's 10 band frequencies using
+/// one-pole crossover points at the geometric midpoints between adjacent EQ bands.
+/// Each range uses independent envelope tracking, downward compression, and
 /// fixed makeup gain so quieter content is lifted while louder peaks are reduced.
 final class MultiBandCompressorProcessor: @unchecked Sendable {
     private(set) var sampleRate: Double
@@ -14,36 +15,58 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     var isEnabled: Bool { _isEnabled }
 
     private nonisolated(unsafe) var _isEnabled = false
-    private nonisolated(unsafe) var _lowAlpha: Float = 0.0
-    private nonisolated(unsafe) var _highAlpha: Float = 0.0
     private nonisolated(unsafe) var _attackCoefficient: Float = 0.0
     private nonisolated(unsafe) var _releaseCoefficient: Float = 0.0
-
-    private nonisolated(unsafe) var _lowThreshold: Float = 1.0
-    private nonisolated(unsafe) var _lowRatio: Float = 1.0
-    private nonisolated(unsafe) var _lowMakeupGain: Float = 1.0
-    private nonisolated(unsafe) var _midThreshold: Float = 1.0
-    private nonisolated(unsafe) var _midRatio: Float = 1.0
-    private nonisolated(unsafe) var _midMakeupGain: Float = 1.0
-    private nonisolated(unsafe) var _highThreshold: Float = 1.0
-    private nonisolated(unsafe) var _highRatio: Float = 1.0
-    private nonisolated(unsafe) var _highMakeupGain: Float = 1.0
-
-    private var lowStateL: Float = 0.0
-    private var lowStateR: Float = 0.0
-    private var highStateL: Float = 0.0
-    private var highStateR: Float = 0.0
-    private var lowEnvelopeL: Float = 0.0
-    private var lowEnvelopeR: Float = 0.0
-    private var midEnvelopeL: Float = 0.0
-    private var midEnvelopeR: Float = 0.0
-    private var highEnvelopeL: Float = 0.0
-    private var highEnvelopeR: Float = 0.0
+    private let crossoverAlphas: UnsafeMutablePointer<Float>
+    private let thresholds: UnsafeMutablePointer<Float>
+    private let ratios: UnsafeMutablePointer<Float>
+    private let makeupGains: UnsafeMutablePointer<Float>
+    private let statesL: UnsafeMutablePointer<Float>
+    private let statesR: UnsafeMutablePointer<Float>
+    private let envelopesL: UnsafeMutablePointer<Float>
+    private let envelopesR: UnsafeMutablePointer<Float>
 
     init(sampleRate: Double) {
         self.sampleRate = sampleRate
+        crossoverAlphas = .allocate(capacity: MultiBandCompressionMath.crossoverCount)
+        thresholds = .allocate(capacity: MultiBandCompressionMath.bandCount)
+        ratios = .allocate(capacity: MultiBandCompressionMath.bandCount)
+        makeupGains = .allocate(capacity: MultiBandCompressionMath.bandCount)
+        statesL = .allocate(capacity: MultiBandCompressionMath.crossoverCount)
+        statesR = .allocate(capacity: MultiBandCompressionMath.crossoverCount)
+        envelopesL = .allocate(capacity: MultiBandCompressionMath.bandCount)
+        envelopesR = .allocate(capacity: MultiBandCompressionMath.bandCount)
+
+        crossoverAlphas.initialize(repeating: 0.0, count: MultiBandCompressionMath.crossoverCount)
+        thresholds.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
+        ratios.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
+        makeupGains.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
+        statesL.initialize(repeating: 0.0, count: MultiBandCompressionMath.crossoverCount)
+        statesR.initialize(repeating: 0.0, count: MultiBandCompressionMath.crossoverCount)
+        envelopesL.initialize(repeating: 0.0, count: MultiBandCompressionMath.bandCount)
+        envelopesR.initialize(repeating: 0.0, count: MultiBandCompressionMath.bandCount)
+
         updateCoefficients(for: sampleRate)
         updateSettings(.bypassed)
+    }
+
+    deinit {
+        crossoverAlphas.deinitialize(count: MultiBandCompressionMath.crossoverCount)
+        thresholds.deinitialize(count: MultiBandCompressionMath.bandCount)
+        ratios.deinitialize(count: MultiBandCompressionMath.bandCount)
+        makeupGains.deinitialize(count: MultiBandCompressionMath.bandCount)
+        statesL.deinitialize(count: MultiBandCompressionMath.crossoverCount)
+        statesR.deinitialize(count: MultiBandCompressionMath.crossoverCount)
+        envelopesL.deinitialize(count: MultiBandCompressionMath.bandCount)
+        envelopesR.deinitialize(count: MultiBandCompressionMath.bandCount)
+        crossoverAlphas.deallocate()
+        thresholds.deallocate()
+        ratios.deallocate()
+        makeupGains.deallocate()
+        statesL.deallocate()
+        statesR.deallocate()
+        envelopesL.deallocate()
+        envelopesR.deallocate()
     }
 
     func updateSettings(_ settings: CompressorSettings) {
@@ -57,15 +80,11 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         }
 
         let parameters = MultiBandCompressionMath.bandParameters(for: settings.clampedAmount)
-        _lowThreshold = parameters.low.threshold
-        _lowRatio = parameters.low.ratio
-        _lowMakeupGain = parameters.low.makeupGain
-        _midThreshold = parameters.mid.threshold
-        _midRatio = parameters.mid.ratio
-        _midMakeupGain = parameters.mid.makeupGain
-        _highThreshold = parameters.high.threshold
-        _highRatio = parameters.high.ratio
-        _highMakeupGain = parameters.high.makeupGain
+        for index in 0..<MultiBandCompressionMath.bandCount {
+            thresholds[index] = parameters[index].threshold
+            ratios[index] = parameters[index].ratio
+            makeupGains[index] = parameters[index].makeupGain
+        }
         OSMemoryBarrier()
         _isEnabled = shouldEnable
     }
@@ -88,35 +107,23 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         guard _isEnabled else { return }
         OSMemoryBarrier()
 
-        let lowAlpha = _lowAlpha
-        let highAlpha = _highAlpha
         let attackCoefficient = _attackCoefficient
         let releaseCoefficient = _releaseCoefficient
 
         left = processSample(
             left,
-            lowAlpha: lowAlpha,
-            highAlpha: highAlpha,
             attackCoefficient: attackCoefficient,
             releaseCoefficient: releaseCoefficient,
-            lowState: &lowStateL,
-            highState: &highStateL,
-            lowEnvelope: &lowEnvelopeL,
-            midEnvelope: &midEnvelopeL,
-            highEnvelope: &highEnvelopeL
+            states: statesL,
+            envelopes: envelopesL
         )
 
         right = processSample(
             right,
-            lowAlpha: lowAlpha,
-            highAlpha: highAlpha,
             attackCoefficient: attackCoefficient,
             releaseCoefficient: releaseCoefficient,
-            lowState: &lowStateR,
-            highState: &highStateR,
-            lowEnvelope: &lowEnvelopeR,
-            midEnvelope: &midEnvelopeR,
-            highEnvelope: &highEnvelopeR
+            states: statesR,
+            envelopes: envelopesR
         )
 
         if !left.isFinite || !right.isFinite {
@@ -128,49 +135,41 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
     private func processSample(
         _ sample: Float,
-        lowAlpha: Float,
-        highAlpha: Float,
         attackCoefficient: Float,
         releaseCoefficient: Float,
-        lowState: inout Float,
-        highState: inout Float,
-        lowEnvelope: inout Float,
-        midEnvelope: inout Float,
-        highEnvelope: inout Float
+        states: UnsafeMutablePointer<Float>,
+        envelopes: UnsafeMutablePointer<Float>
     ) -> Float {
-        lowState += lowAlpha * (sample - lowState)
-        highState += highAlpha * (sample - highState)
+        var output: Float = 0.0
+        var previousLowpass: Float = 0.0
 
-        let lowBand = lowState
-        let midLowpass = highState
-        let midBand = midLowpass - lowBand
-        let highBand = sample - midLowpass
+        for index in 0..<MultiBandCompressionMath.crossoverCount {
+            states[index] += crossoverAlphas[index] * (sample - states[index])
+            let lowpass = states[index]
+            let bandSample = lowpass - previousLowpass
+            output += compressBand(
+                bandSample,
+                threshold: thresholds[index],
+                ratio: ratios[index],
+                makeupGain: makeupGains[index],
+                attackCoefficient: attackCoefficient,
+                releaseCoefficient: releaseCoefficient,
+                envelope: &envelopes[index]
+            )
+            previousLowpass = lowpass
+        }
 
-        return compressBand(
-            lowBand,
-            threshold: _lowThreshold,
-            ratio: _lowRatio,
-            makeupGain: _lowMakeupGain,
+        output += compressBand(
+            sample - previousLowpass,
+            threshold: thresholds[MultiBandCompressionMath.bandCount - 1],
+            ratio: ratios[MultiBandCompressionMath.bandCount - 1],
+            makeupGain: makeupGains[MultiBandCompressionMath.bandCount - 1],
             attackCoefficient: attackCoefficient,
             releaseCoefficient: releaseCoefficient,
-            envelope: &lowEnvelope
-        ) + compressBand(
-            midBand,
-            threshold: _midThreshold,
-            ratio: _midRatio,
-            makeupGain: _midMakeupGain,
-            attackCoefficient: attackCoefficient,
-            releaseCoefficient: releaseCoefficient,
-            envelope: &midEnvelope
-        ) + compressBand(
-            highBand,
-            threshold: _highThreshold,
-            ratio: _highRatio,
-            makeupGain: _highMakeupGain,
-            attackCoefficient: attackCoefficient,
-            releaseCoefficient: releaseCoefficient,
-            envelope: &highEnvelope
+            envelope: &envelopes[MultiBandCompressionMath.bandCount - 1]
         )
+
+        return output
     }
 
     private func compressBand(
@@ -195,14 +194,12 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     }
 
     private func updateCoefficients(for sampleRate: Double) {
-        _lowAlpha = MultiBandCompressionMath.onePoleAlpha(
-            cutoff: MultiBandCompressionMath.lowCrossoverFrequency,
-            sampleRate: sampleRate
-        )
-        _highAlpha = MultiBandCompressionMath.onePoleAlpha(
-            cutoff: MultiBandCompressionMath.highCrossoverFrequency,
-            sampleRate: sampleRate
-        )
+        for index in 0..<MultiBandCompressionMath.crossoverCount {
+            crossoverAlphas[index] = MultiBandCompressionMath.onePoleAlpha(
+                cutoff: MultiBandCompressionMath.crossoverFrequencies[index],
+                sampleRate: sampleRate
+            )
+        }
         _attackCoefficient = MultiBandCompressionMath.smoothingCoefficient(
             time: MultiBandCompressionMath.attackTime,
             sampleRate: sampleRate
@@ -214,15 +211,9 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     }
 
     private func resetState() {
-        lowStateL = 0.0
-        lowStateR = 0.0
-        highStateL = 0.0
-        highStateR = 0.0
-        lowEnvelopeL = 0.0
-        lowEnvelopeR = 0.0
-        midEnvelopeL = 0.0
-        midEnvelopeR = 0.0
-        highEnvelopeL = 0.0
-        highEnvelopeR = 0.0
+        memset(statesL, 0, MultiBandCompressionMath.crossoverCount * MemoryLayout<Float>.size)
+        memset(statesR, 0, MultiBandCompressionMath.crossoverCount * MemoryLayout<Float>.size)
+        memset(envelopesL, 0, MultiBandCompressionMath.bandCount * MemoryLayout<Float>.size)
+        memset(envelopesR, 0, MultiBandCompressionMath.bandCount * MemoryLayout<Float>.size)
     }
 }

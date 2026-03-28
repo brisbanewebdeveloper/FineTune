@@ -7,35 +7,44 @@ enum MultiBandCompressionMath {
         let makeupGain: Float
     }
 
-    static let lowCrossoverFrequency: Float = 200.0
-    static let highCrossoverFrequency: Float = 4_000.0
+    static let bandCount = EQSettings.bandCount
+    static let crossoverCount = bandCount - 1
     static let attackTime: Float = 0.008
     static let releaseTime: Float = 0.120
 
-    static func bandParameters(for amount: Float) -> (low: BandParameters, mid: BandParameters, high: BandParameters) {
+    /// Compression ranges align with the EQ's 10 center frequencies.
+    /// Each crossover sits at the geometric midpoint between adjacent EQ bands.
+    static let crossoverFrequencies: [Float] = zip(EQSettings.frequencies, EQSettings.frequencies.dropFirst()).map {
+        Float(sqrt($0 * $1))
+    }
+
+    static func bandParameters(for amount: Float) -> [BandParameters] {
         let clampedAmount = max(CompressorSettings.minAmount, min(CompressorSettings.maxAmount, amount.isFinite ? amount : 1.0))
 
         func interpolate(_ start: Float, _ end: Float) -> Float {
             start + (end - start) * clampedAmount
         }
 
-        return (
-            low: BandParameters(
-                threshold: interpolate(1.0, 0.42),
-                ratio: interpolate(1.0, 2.3),
-                makeupGain: interpolate(1.0, 1.14)
-            ),
-            mid: BandParameters(
-                threshold: interpolate(1.0, 0.28),
-                ratio: interpolate(1.0, 3.2),
-                makeupGain: interpolate(1.0, 1.32)
-            ),
-            high: BandParameters(
-                threshold: interpolate(1.0, 0.24),
-                ratio: interpolate(1.0, 2.0),
-                makeupGain: interpolate(1.0, 1.18)
+        let targets: [(threshold: Float, ratio: Float, makeupGain: Float)] = [
+            (0.42, 2.3, 1.14),
+            (0.42, 2.3, 1.14),
+            (0.42, 2.3, 1.14),
+            (0.28, 3.2, 1.32),
+            (0.28, 3.2, 1.32),
+            (0.28, 3.2, 1.32),
+            (0.28, 3.2, 1.32),
+            (0.24, 2.0, 1.18),
+            (0.24, 2.0, 1.18),
+            (0.24, 2.0, 1.18)
+        ]
+
+        return targets.map { target in
+            BandParameters(
+                threshold: interpolate(1.0, target.threshold),
+                ratio: interpolate(1.0, target.ratio),
+                makeupGain: interpolate(1.0, target.makeupGain)
             )
-        )
+        }
     }
 
     static func compressedGain(envelope: Float, threshold: Float, ratio: Float) -> Float {

@@ -2,12 +2,20 @@ import XCTest
 @testable import FineTune
 
 final class MultiBandCompressionMathTests: XCTestCase {
-    func testZeroAmountProducesBypassBandParameters() {
+    func testBandParametersMatchEQBandCount() {
         let parameters = MultiBandCompressionMath.bandParameters(for: 0)
 
-        XCTAssertEqual(parameters.low, .init(threshold: 1, ratio: 1, makeupGain: 1))
-        XCTAssertEqual(parameters.mid, .init(threshold: 1, ratio: 1, makeupGain: 1))
-        XCTAssertEqual(parameters.high, .init(threshold: 1, ratio: 1, makeupGain: 1))
+        XCTAssertEqual(parameters.count, EQSettings.bandCount)
+        XCTAssertTrue(parameters.allSatisfy { $0 == .init(threshold: 1, ratio: 1, makeupGain: 1) })
+    }
+
+    func testCrossoverFrequenciesAlignWithEQBandMidpoints() {
+        let expected = zip(EQSettings.frequencies, EQSettings.frequencies.dropFirst()).map {
+            Float(sqrt($0 * $1))
+        }
+
+        XCTAssertEqual(MultiBandCompressionMath.crossoverFrequencies.count, EQSettings.bandCount - 1)
+        XCTAssertEqual(MultiBandCompressionMath.crossoverFrequencies, expected)
     }
 
     func testCompressionGainReducesSignalsAboveThreshold() {
