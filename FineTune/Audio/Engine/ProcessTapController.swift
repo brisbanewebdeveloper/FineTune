@@ -1069,6 +1069,8 @@ final class ProcessTapController: ProcessTapControlling {
                 if inputChannels == 2 {
                     for frame in 0..<frameCount {
                         currentVol += (targetVol - currentVol) * rampCoefficient
+                        // Compression intentionally sees the ramped per-source level so
+                        // volume/boost changes feed the same dynamics the user hears.
                         let gain = currentVol * crossfadeMultiplier
                         let base = frame * 2
                         var left = inputSamples[base] * gain
@@ -1093,6 +1095,8 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 2 && outputChannels > 2 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
+                    // Compression intentionally sees the ramped per-source level so
+                    // volume/boost changes feed the same dynamics the user hears.
                     let gain = currentVol * crossfadeMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
@@ -1113,6 +1117,8 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 1 && outputChannels > 1 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
+                    // Compression intentionally sees the ramped per-source level so
+                    // volume/boost changes feed the same dynamics the user hears.
                     let gain = currentVol * crossfadeMultiplier
                     var left = inputSamples[frame] * gain
                     var right = left

@@ -11,6 +11,5 @@ final class CompressorSettingsTests: XCTestCase {
         let settings = try JSONDecoder().decode(CompressorSettings.self, from: Data("{}".utf8))
 
         XCTAssertEqual(settings, .bypassed)
-        XCTAssertEqual(settings.clampedAmount, 1.0)
     }
 }

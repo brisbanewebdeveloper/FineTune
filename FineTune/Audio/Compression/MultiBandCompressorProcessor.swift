@@ -49,6 +49,12 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     func updateSettings(_ settings: CompressorSettings) {
         dispatchPrecondition(condition: .onQueue(.main))
         _currentSettings = settings
+        let shouldEnable = settings.isEnabled && settings.clampedAmount > 0
+
+        if !shouldEnable {
+            _isEnabled = false
+            OSMemoryBarrier()
+        }
 
         let parameters = MultiBandCompressionMath.bandParameters(for: settings.clampedAmount)
         _lowThreshold = parameters.low.threshold
@@ -60,7 +66,8 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         _highThreshold = parameters.high.threshold
         _highRatio = parameters.high.ratio
         _highMakeupGain = parameters.high.makeupGain
-        _isEnabled = settings.isEnabled && settings.clampedAmount > 0
+        OSMemoryBarrier()
+        _isEnabled = shouldEnable
     }
 
     func updateSampleRate(_ newRate: Double) {
@@ -79,6 +86,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
     func processStereoFrame(left: inout Float, right: inout Float) {
         guard _isEnabled else { return }
+        OSMemoryBarrier()
 
         let lowAlpha = _lowAlpha
         let highAlpha = _highAlpha
