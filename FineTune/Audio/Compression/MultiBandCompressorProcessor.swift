@@ -8,6 +8,9 @@ import Darwin.C
 /// Each range uses independent envelope tracking, downward compression, and
 /// fixed makeup gain so quieter content is lifted while louder peaks are reduced.
 final class MultiBandCompressorProcessor: @unchecked Sendable {
+    /// Snapshot of RT-readable compressor parameters for a single callback/buffer pass.
+    /// The pointed-to storage remains owned by the processor and must only be used while
+    /// the processor instance is alive and the callback is actively processing.
     struct ProcessingState {
         let crossoverAlphas: UnsafeMutablePointer<Float>
         let thresholds: UnsafeMutablePointer<Float>

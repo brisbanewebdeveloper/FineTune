@@ -4,6 +4,21 @@ import AudioToolbox
 
 final class ProcessTapControllerProcessingTests: XCTestCase {
     @MainActor
+    func testDisabledCompressorHasNoProcessingStateAndLeavesSamplesUnchanged() throws {
+        let compressor = MultiBandCompressorProcessor(sampleRate: 48_000)
+        compressor.updateSettings(.bypassed)
+
+        XCTAssertNil(compressor.processingState())
+
+        var left: Float = 0.25
+        var right: Float = -0.4
+        compressor.processStereoFrame(left: &left, right: &right)
+
+        XCTAssertEqual(left, 0.25, accuracy: 0.000_001)
+        XCTAssertEqual(right, -0.4, accuracy: 0.000_001)
+    }
+
+    @MainActor
     func testCompressorProcessingStateMatchesPerFrameAPI() {
         let settings = CompressorSettings(isEnabled: true, amount: 1.0)
         let perFrameCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
