@@ -26,7 +26,10 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
 
         let bufferedCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
         bufferedCompressor.updateSettings(settings)
-        let bufferedState = try XCTUnwrap(bufferedCompressor.processingState())
+        let bufferedState = try XCTUnwrap(
+            bufferedCompressor.processingState(),
+            "Expected processingState() to return a snapshot when compression is enabled."
+        )
 
         var perFrameSamples: [Float] = [0.05, -0.04, 0.8, -0.7, 0.08, -0.09, 0.9, -0.85]
         var bufferedSamples = perFrameSamples
