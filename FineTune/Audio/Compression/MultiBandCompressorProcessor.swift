@@ -13,10 +13,10 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     /// the processor instance is alive, from the active callback/buffer pass that requested
     /// the snapshot, and not retained across subsequent main-thread settings/sample-rate updates.
     struct ProcessingState {
-        let crossoverAlphas: UnsafeMutablePointer<Float>
-        let thresholds: UnsafeMutablePointer<Float>
-        let ratios: UnsafeMutablePointer<Float>
-        let makeupGains: UnsafeMutablePointer<Float>
+        let crossoverAlphas: UnsafePointer<Float>
+        let thresholds: UnsafePointer<Float>
+        let ratios: UnsafePointer<Float>
+        let makeupGains: UnsafePointer<Float>
         let attackCoefficient: Float
         let releaseCoefficient: Float
     }
@@ -126,10 +126,10 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         guard _isEnabled else { return nil }
         OSMemoryBarrier()
         return ProcessingState(
-            crossoverAlphas: crossoverAlphas,
-            thresholds: thresholds,
-            ratios: ratios,
-            makeupGains: makeupGains,
+            crossoverAlphas: UnsafePointer(crossoverAlphas),
+            thresholds: UnsafePointer(thresholds),
+            ratios: UnsafePointer(ratios),
+            makeupGains: UnsafePointer(makeupGains),
             attackCoefficient: _attackCoefficient,
             releaseCoefficient: _releaseCoefficient
         )
