@@ -19,7 +19,7 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
     }
 
     @MainActor
-    func testCompressorProcessingStateMatchesPerFrameAPI() {
+    func testCompressorProcessingStateProducesSameOutputAsDirectProcessing() throws {
         let settings = CompressorSettings(isEnabled: true, amount: 1.0)
         let perFrameCompressor = MultiBandCompressorProcessor(sampleRate: 48_000)
         perFrameCompressor.updateSettings(settings)
