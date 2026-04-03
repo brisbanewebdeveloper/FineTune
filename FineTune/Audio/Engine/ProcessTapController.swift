@@ -112,6 +112,7 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var secondaryCompressorProcessor: MultiBandCompressorProcessor?
     private nonisolated(unsafe) var secondaryEQProcessor: EQProcessor?
     private nonisolated(unsafe) var secondaryAutoEQProcessor: AutoEQProcessor?
+    private var isBandMeteringEnabled = false
 
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
@@ -137,6 +138,16 @@ final class ProcessTapController: ProcessTapControlling {
     // MARK: - Public Properties
 
     var audioLevel: Float { crossfadeState.isActive ? max(_peakLevel, _secondaryPeakLevel) : _peakLevel }
+
+    var compressorBandLevels: [Float] {
+        let primaryLevels = compressorProcessor?.bandLevelsSnapshot()
+            ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
+        guard crossfadeState.isActive else { return primaryLevels }
+
+        let secondaryLevels = secondaryCompressorProcessor?.bandLevelsSnapshot()
+            ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
+        return zip(primaryLevels, secondaryLevels).map { max($0, $1) }
+    }
 
     private static let hostTimeNanosScale: Double = {
         var info = mach_timebase_info_data_t()
@@ -221,6 +232,12 @@ final class ProcessTapController: ProcessTapControlling {
     func updateCompressorSettings(_ settings: CompressorSettings) {
         compressorProcessor?.updateSettings(settings)
         secondaryCompressorProcessor?.updateSettings(settings)
+    }
+
+    func setBandMeteringEnabled(_ enabled: Bool) {
+        isBandMeteringEnabled = enabled
+        compressorProcessor?.setMeteringEnabled(enabled)
+        secondaryCompressorProcessor?.setMeteringEnabled(enabled)
     }
 
     func updateEQSettings(_ settings: EQSettings) {
@@ -425,6 +442,7 @@ final class ProcessTapController: ProcessTapControlling {
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
         compressorProcessor = MultiBandCompressorProcessor(sampleRate: sampleRate)
+        compressorProcessor?.setMeteringEnabled(isBandMeteringEnabled)
         eqProcessor = EQProcessor(sampleRate: sampleRate)
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
 
@@ -778,6 +796,7 @@ final class ProcessTapController: ProcessTapControlling {
         if let settings = compressorProcessor?.currentSettings {
             secCompressor.updateSettings(settings)
         }
+        secCompressor.setMeteringEnabled(isBandMeteringEnabled)
         secondaryCompressorProcessor = secCompressor
 
         let secEQ = EQProcessor(sampleRate: sampleRate)

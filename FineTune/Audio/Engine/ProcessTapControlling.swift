@@ -12,6 +12,7 @@ protocol ProcessTapControlling: AnyObject {
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
+    var compressorBandLevels: [Float] { get }
     var currentDeviceUID: String? { get }
     var currentDeviceUIDs: [String] { get }
 
@@ -19,6 +20,7 @@ protocol ProcessTapControlling: AnyObject {
     func invalidate()
     func invalidateAsync() async
     func updateCompressorSettings(_ settings: CompressorSettings)
+    func setBandMeteringEnabled(_ enabled: Bool)
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
@@ -32,6 +34,10 @@ protocol ProcessTapControlling: AnyObject {
 }
 
 extension ProcessTapControlling {
+    var compressorBandLevels: [Float] {
+        Array(repeating: Float.zero, count: EQSettings.bandCount)
+    }
+
     /// Convenience: defaults sourceDeviceDead to false.
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
         try await switchDevice(to: newDeviceUID, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
@@ -44,6 +50,10 @@ extension ProcessTapControlling {
 
     func invalidateAsync() async {
         invalidate()
+    }
+
+    func setBandMeteringEnabled(_ enabled: Bool) {
+        // Default no-op for mocks that don't override.
     }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {

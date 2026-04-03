@@ -3,6 +3,9 @@ import SwiftUI
 
 struct EQPanelView: View {
     @Binding var settings: EQSettings
+    let compressorSettings: CompressorSettings
+    let realtimeBandLevels: [Float]
+    let showsRealtimeBandLevels: Bool
     let onPresetSelected: (EQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
 
@@ -11,6 +14,15 @@ struct EQPanelView: View {
     private var currentPreset: EQPreset? {
         EQPreset.allCases.first { preset in
             preset.settings.bandGains == settings.bandGains
+        }
+    }
+
+    private var normalizedBandLevels: [Float] {
+        let padded = Array(realtimeBandLevels.prefix(EQSettings.bandCount))
+        let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
+        return normalized.map { level in
+            guard level.isFinite else { return 0.0 }
+            return min(max(level, 0.0), 1.0)
         }
     }
 
@@ -49,6 +61,12 @@ struct EQPanelView: View {
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
+            MultiBandLevelMeter(
+                levels: normalizedBandLevels,
+                isRealtimeAvailable: showsRealtimeBandLevels,
+                isCompressionEnabled: compressorSettings.isEnabled
+            )
+
             // 10-band sliders
             HStack(spacing: 22) {
                 ForEach(0..<10, id: \.self) { index in
@@ -86,6 +104,9 @@ struct EQPanelView: View {
     VStack {
         EQPanelView(
             settings: .constant(EQSettings()),
+            compressorSettings: .bypassed,
+            realtimeBandLevels: Array(repeating: Float.zero, count: EQSettings.bandCount),
+            showsRealtimeBandLevels: true,
             onPresetSelected: { _ in },
             onSettingsChanged: { _ in }
         )

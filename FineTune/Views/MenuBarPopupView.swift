@@ -747,6 +747,10 @@ struct MenuBarPopupView: View {
                     audioEngine.setBoost(for: app, to: boost)
                 },
                 getAudioLevel: { audioEngine.getAudioLevel(for: app) },
+                getCompressorBandLevels: { audioEngine.getCompressorBandLevels(for: app) },
+                setBandMeteringEnabled: { enabled in
+                    audioEngine.setBandMeteringEnabled(enabled, for: app)
+                },
                 isPopupVisible: isPopupVisible,
                 onVolumeChange: { volume in
                     audioEngine.setVolume(for: app, to: volume)

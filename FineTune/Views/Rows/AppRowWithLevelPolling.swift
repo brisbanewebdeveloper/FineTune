@@ -15,6 +15,8 @@ struct AppRowWithLevelPolling: View {
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
     let getAudioLevel: () -> Float
+    let getCompressorBandLevels: () -> [Float]
+    let setBandMeteringEnabled: (Bool) -> Void
     let isPopupVisible: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
@@ -31,6 +33,7 @@ struct AppRowWithLevelPolling: View {
     let onEQToggle: () -> Void
 
     @State private var displayLevel: Float = 0
+    @State private var displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
     @State private var levelTimer: Timer?
 
     init(
@@ -46,6 +49,8 @@ struct AppRowWithLevelPolling: View {
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         getAudioLevel: @escaping () -> Float,
+        getCompressorBandLevels: @escaping () -> [Float] = { Array(repeating: Float.zero, count: EQSettings.bandCount) },
+        setBandMeteringEnabled: @escaping (Bool) -> Void = { _ in },
         isPopupVisible: Bool = true,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteChange: @escaping (Bool) -> Void,
@@ -73,6 +78,8 @@ struct AppRowWithLevelPolling: View {
         self.boost = boost
         self.onBoostChange = onBoostChange
         self.getAudioLevel = getAudioLevel
+        self.getCompressorBandLevels = getCompressorBandLevels
+        self.setBandMeteringEnabled = setBandMeteringEnabled
         self.isPopupVisible = isPopupVisible
         self.onVolumeChange = onVolumeChange
         self.onMuteChange = onMuteChange
@@ -94,6 +101,8 @@ struct AppRowWithLevelPolling: View {
             app: app,
             volume: volume,
             audioLevel: displayLevel,
+            realtimeBandLevels: displayBandLevels,
+            showsRealtimeBandLevels: true,
             devices: devices,
             selectedDeviceUID: selectedDeviceUID,
             selectedDeviceUIDs: selectedDeviceUIDs,
@@ -121,17 +130,25 @@ struct AppRowWithLevelPolling: View {
             if isPopupVisible {
                 startLevelPolling()
             }
+            syncBandMeteringState()
         }
         .onDisappear {
             stopLevelPolling()
+            setBandMeteringEnabled(false)
+            displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
         }
         .onChange(of: isPopupVisible) { _, visible in
             if visible {
                 startLevelPolling()
+                refreshLevels()
             } else {
                 stopLevelPolling()
                 displayLevel = 0  // Reset meter when hidden
             }
+            syncBandMeteringState()
+        }
+        .onChange(of: isEQExpanded) { _, _ in
+            syncBandMeteringState()
         }
     }
 
@@ -139,16 +156,47 @@ struct AppRowWithLevelPolling: View {
         // Guard against duplicate timers
         guard levelTimer == nil else { return }
 
+        refreshLevels()
+
         levelTimer = Timer.scheduledTimer(
             withTimeInterval: DesignTokens.Timing.vuMeterUpdateInterval,
             repeats: true
         ) { _ in
-            displayLevel = getAudioLevel()
+            refreshLevels()
         }
     }
 
     private func stopLevelPolling() {
         levelTimer?.invalidate()
         levelTimer = nil
+    }
+
+    private func refreshLevels() {
+        displayLevel = getAudioLevel()
+        displayBandLevels = isBandMeteringActive
+            ? normalizedBandLevels(getCompressorBandLevels())
+            : Array(repeating: Float.zero, count: EQSettings.bandCount)
+    }
+
+    private func syncBandMeteringState() {
+        setBandMeteringEnabled(isBandMeteringActive)
+        if isBandMeteringActive {
+            refreshLevels()
+        } else {
+            displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
+        }
+    }
+
+    private var isBandMeteringActive: Bool {
+        isPopupVisible && isEQExpanded
+    }
+
+    private func normalizedBandLevels(_ levels: [Float]) -> [Float] {
+        let padded = Array(levels.prefix(EQSettings.bandCount))
+        let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
+        return normalized.map { level in
+            guard level.isFinite else { return 0.0 }
+            return min(max(level, 0.0), 1.0)
+        }
     }
 }

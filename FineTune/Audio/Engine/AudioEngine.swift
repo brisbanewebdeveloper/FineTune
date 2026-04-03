@@ -600,6 +600,16 @@ final class AudioEngine {
         taps[app.id]?.audioLevel ?? 0.0
     }
 
+    /// Get realtime 10-band compressor/analyzer levels for a specific app.
+    func getCompressorBandLevels(for app: AudioApp) -> [Float] {
+        taps[app.id]?.compressorBandLevels ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
+    }
+
+    /// Enable lightweight per-band metering while the expanded EQ panel is visible.
+    func setBandMeteringEnabled(_ enabled: Bool, for app: AudioApp) {
+        taps[app.id]?.setBandMeteringEnabled(enabled)
+    }
+
     func start() {
         // Monitors have internal guards against double-starting
         if permission.status == .authorized {

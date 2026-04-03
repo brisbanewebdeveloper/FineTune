@@ -7,6 +7,8 @@ struct AppRow: View {
     let app: AudioApp
     let volume: Float  // Linear gain 0-1 (boost applied separately)
     let audioLevel: Float
+    let realtimeBandLevels: [Float]
+    let showsRealtimeBandLevels: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String  // For single mode
     let selectedDeviceUIDs: Set<String>  // For multi mode
@@ -37,6 +39,8 @@ struct AppRow: View {
         app: AudioApp,
         volume: Float,
         audioLevel: Float = 0,
+        realtimeBandLevels: [Float] = Array(repeating: Float.zero, count: EQSettings.bandCount),
+        showsRealtimeBandLevels: Bool = true,
         devices: [AudioDevice],
         selectedDeviceUID: String,
         selectedDeviceUIDs: Set<String> = [],
@@ -63,6 +67,8 @@ struct AppRow: View {
         self.app = app
         self.volume = volume
         self.audioLevel = audioLevel
+        self.realtimeBandLevels = realtimeBandLevels
+        self.showsRealtimeBandLevels = showsRealtimeBandLevels
         self.devices = devices
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
@@ -152,6 +158,9 @@ struct AppRow: View {
             // SwiftUI calculates natural height via conditional rendering
             EQPanelView(
                 settings: $localEQSettings,
+                compressorSettings: compressorSettings,
+                realtimeBandLevels: realtimeBandLevels,
+                showsRealtimeBandLevels: showsRealtimeBandLevels,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)

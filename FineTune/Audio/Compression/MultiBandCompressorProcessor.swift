@@ -25,15 +25,17 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     private var _currentSettings: CompressorSettings?
 
     var currentSettings: CompressorSettings? { _currentSettings }
-    var isEnabled: Bool { _isEnabled }
+    var isEnabled: Bool { _compressionEnabled }
 
-    private nonisolated(unsafe) var _isEnabled = false
+    private nonisolated(unsafe) var _compressionEnabled = false
+    private nonisolated(unsafe) var _meteringEnabled = false
     private nonisolated(unsafe) var _attackCoefficient: Float = 0.0
     private nonisolated(unsafe) var _releaseCoefficient: Float = 0.0
     private let crossoverAlphas: UnsafeMutablePointer<Float>
     private let thresholds: UnsafeMutablePointer<Float>
     private let ratios: UnsafeMutablePointer<Float>
     private let makeupGains: UnsafeMutablePointer<Float>
+    private let displayLevels: UnsafeMutablePointer<Float>
     private let statesL: UnsafeMutablePointer<Float>
     private let statesR: UnsafeMutablePointer<Float>
     private let envelopesL: UnsafeMutablePointer<Float>
@@ -45,6 +47,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         thresholds = .allocate(capacity: MultiBandCompressionMath.bandCount)
         ratios = .allocate(capacity: MultiBandCompressionMath.bandCount)
         makeupGains = .allocate(capacity: MultiBandCompressionMath.bandCount)
+        displayLevels = .allocate(capacity: MultiBandCompressionMath.bandCount)
         statesL = .allocate(capacity: MultiBandCompressionMath.crossoverCount)
         statesR = .allocate(capacity: MultiBandCompressionMath.crossoverCount)
         envelopesL = .allocate(capacity: MultiBandCompressionMath.bandCount)
@@ -54,6 +57,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         thresholds.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
         ratios.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
         makeupGains.initialize(repeating: 1.0, count: MultiBandCompressionMath.bandCount)
+        displayLevels.initialize(repeating: 0.0, count: MultiBandCompressionMath.bandCount)
         statesL.initialize(repeating: 0.0, count: MultiBandCompressionMath.crossoverCount)
         statesR.initialize(repeating: 0.0, count: MultiBandCompressionMath.crossoverCount)
         envelopesL.initialize(repeating: 0.0, count: MultiBandCompressionMath.bandCount)
@@ -68,6 +72,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         thresholds.deinitialize(count: MultiBandCompressionMath.bandCount)
         ratios.deinitialize(count: MultiBandCompressionMath.bandCount)
         makeupGains.deinitialize(count: MultiBandCompressionMath.bandCount)
+        displayLevels.deinitialize(count: MultiBandCompressionMath.bandCount)
         statesL.deinitialize(count: MultiBandCompressionMath.crossoverCount)
         statesR.deinitialize(count: MultiBandCompressionMath.crossoverCount)
         envelopesL.deinitialize(count: MultiBandCompressionMath.bandCount)
@@ -76,6 +81,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         thresholds.deallocate()
         ratios.deallocate()
         makeupGains.deallocate()
+        displayLevels.deallocate()
         statesL.deallocate()
         statesR.deallocate()
         envelopesL.deallocate()
@@ -85,21 +91,48 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     func updateSettings(_ settings: CompressorSettings) {
         dispatchPrecondition(condition: .onQueue(.main))
         _currentSettings = settings
-        let shouldEnable = settings.isEnabled && settings.clampedAmount > 0
+        let shouldCompress = settings.isEnabled && settings.clampedAmount > 0
 
-        if !shouldEnable {
-            _isEnabled = false
+        if !shouldCompress {
+            _compressionEnabled = false
             OSMemoryBarrier()
         }
 
-        let parameters = MultiBandCompressionMath.bandParameters(for: settings.clampedAmount)
+        let parameters = MultiBandCompressionMath.bandParameters(for: shouldCompress ? settings.clampedAmount : 0.0)
         for index in 0..<MultiBandCompressionMath.bandCount {
             thresholds[index] = parameters[index].threshold
             ratios[index] = parameters[index].ratio
             makeupGains[index] = parameters[index].makeupGain
         }
         OSMemoryBarrier()
-        _isEnabled = shouldEnable
+        _compressionEnabled = shouldCompress
+
+        if !(_compressionEnabled || _meteringEnabled) {
+            resetState()
+        }
+    }
+
+    func setMeteringEnabled(_ enabled: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        _meteringEnabled = enabled
+        OSMemoryBarrier()
+
+        if !(_compressionEnabled || _meteringEnabled) {
+            resetState()
+        }
+    }
+
+    func bandLevelsSnapshot() -> [Float] {
+        guard _compressionEnabled || _meteringEnabled else {
+            return Array(repeating: Float.zero, count: MultiBandCompressionMath.bandCount)
+        }
+
+        OSMemoryBarrier()
+        return (0..<MultiBandCompressionMath.bandCount).map { index in
+            let level = displayLevels[index]
+            guard level.isFinite else { return 0.0 }
+            return min(max(level, 0.0), 1.0)
+        }
     }
 
     func updateSampleRate(_ newRate: Double) {
@@ -107,12 +140,12 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         guard newRate != sampleRate else { return }
         sampleRate = newRate
 
-        let enabled = _isEnabled
-        _isEnabled = false
+        let compressionEnabled = _compressionEnabled
+        _compressionEnabled = false
         OSMemoryBarrier()
         updateCoefficients(for: newRate)
         resetState()
-        _isEnabled = enabled
+        _compressionEnabled = compressionEnabled
         OSMemoryBarrier()
     }
 
@@ -123,7 +156,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
     @inline(__always)
     func processingState() -> ProcessingState? {
-        guard _isEnabled else { return nil }
+        guard _compressionEnabled || _meteringEnabled else { return nil }
         OSMemoryBarrier()
         return ProcessingState(
             crossoverAlphas: UnsafePointer(crossoverAlphas),
@@ -155,7 +188,10 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
             resetState()
             left = 0.0
             right = 0.0
+            return
         }
+
+        updateDisplayLevels(state: state)
     }
 
     private func processSample(
@@ -234,10 +270,25 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
         )
     }
 
+    @inline(__always)
+    private func updateDisplayLevels(state: ProcessingState) {
+        for index in 0..<MultiBandCompressionMath.bandCount {
+            let envelope = max(envelopesL[index], envelopesR[index])
+            let gain = MultiBandCompressionMath.compressedGain(
+                envelope: envelope,
+                threshold: state.thresholds[index],
+                ratio: state.ratios[index]
+            )
+            let level = envelope * gain * state.makeupGains[index]
+            displayLevels[index] = level.isFinite ? min(max(level, 0.0), 1.0) : 0.0
+        }
+    }
+
     private func resetState() {
         memset(statesL, 0, MultiBandCompressionMath.crossoverCount * MemoryLayout<Float>.size)
         memset(statesR, 0, MultiBandCompressionMath.crossoverCount * MemoryLayout<Float>.size)
         memset(envelopesL, 0, MultiBandCompressionMath.bandCount * MemoryLayout<Float>.size)
         memset(envelopesR, 0, MultiBandCompressionMath.bandCount * MemoryLayout<Float>.size)
+        memset(displayLevels, 0, MultiBandCompressionMath.bandCount * MemoryLayout<Float>.size)
     }
 }
