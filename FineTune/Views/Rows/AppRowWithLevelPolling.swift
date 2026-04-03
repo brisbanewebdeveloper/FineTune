@@ -22,6 +22,8 @@ struct AppRowWithLevelPolling: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let compressorSettings: CompressorSettings
+    let onCompressionChange: (CompressorSettings) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
@@ -51,6 +53,8 @@ struct AppRowWithLevelPolling: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        compressorSettings: CompressorSettings = .bypassed,
+        onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
@@ -76,6 +80,8 @@ struct AppRowWithLevelPolling: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.compressorSettings = compressorSettings
+        self.onCompressionChange = onCompressionChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
@@ -103,6 +109,8 @@ struct AppRowWithLevelPolling: View {
             onDevicesSelected: onDevicesSelected,
             onDeviceModeChange: onDeviceModeChange,
             onSelectFollowDefault: onSelectFollowDefault,
+            compressorSettings: compressorSettings,
+            onCompressionChange: onCompressionChange,
             onAppActivate: onAppActivate,
             eqSettings: eqSettings,
             onEQChange: onEQChange,

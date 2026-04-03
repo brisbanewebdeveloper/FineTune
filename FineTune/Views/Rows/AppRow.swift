@@ -22,6 +22,8 @@ struct AppRow: View {
     let onDevicesSelected: (Set<String>) -> Void  // Multi mode
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let compressorSettings: CompressorSettings
+    let onCompressionChange: (CompressorSettings) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
@@ -50,6 +52,8 @@ struct AppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        compressorSettings: CompressorSettings = .bypassed,
+        onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
@@ -74,6 +78,8 @@ struct AppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.compressorSettings = compressorSettings
+        self.onCompressionChange = onCompressionChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
@@ -127,10 +133,12 @@ struct AppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
+                    compressorSettings: compressorSettings,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onBoostChange: onBoostChange,
+                    onCompressionChange: onCompressionChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
@@ -138,7 +146,7 @@ struct AppRow: View {
                     onEQToggle: onEQToggle
                 )
             }
-            .frame(height: DesignTokens.Dimensions.rowContentHeight)
+            .frame(minHeight: DesignTokens.Dimensions.rowContentHeight + 18)
         } expandedContent: {
             // EQ panel - shown when expanded
             // SwiftUI calculates natural height via conditional rendering

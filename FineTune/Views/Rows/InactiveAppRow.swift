@@ -26,6 +26,8 @@ struct InactiveAppRow: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let compressorSettings: CompressorSettings
+    let onCompressionChange: (CompressorSettings) -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
@@ -52,6 +54,8 @@ struct InactiveAppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        compressorSettings: CompressorSettings = .bypassed,
+        onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -75,6 +79,8 @@ struct InactiveAppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.compressorSettings = compressorSettings
+        self.onCompressionChange = onCompressionChange
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
@@ -114,10 +120,12 @@ struct InactiveAppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
+                    compressorSettings: compressorSettings,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onBoostChange: onBoostChange,
+                    onCompressionChange: onCompressionChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
@@ -125,7 +133,7 @@ struct InactiveAppRow: View {
                     onEQToggle: onEQToggle
                 )
             }
-            .frame(height: DesignTokens.Dimensions.rowContentHeight)
+            .frame(minHeight: DesignTokens.Dimensions.rowContentHeight + 18)
             .opacity(0.6)
         } expandedContent: {
             // EQ panel

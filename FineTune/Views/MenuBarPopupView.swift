@@ -766,6 +766,10 @@ struct MenuBarPopupView: View {
                 onSelectFollowDefault: {
                     audioEngine.setDevice(for: app, deviceUID: nil)
                 },
+                compressorSettings: audioEngine.getCompressorSettings(for: app),
+                onCompressionChange: { settings in
+                    audioEngine.setCompressorSettings(settings, for: app)
+                },
                 onAppActivate: {
                     activateApp(pid: app.id, bundleID: app.bundleID)
                 },
@@ -818,6 +822,10 @@ struct MenuBarPopupView: View {
             },
             onSelectFollowDefault: {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
+            },
+            compressorSettings: audioEngine.getCompressorSettingsForInactive(identifier: identifier),
+            onCompressionChange: { settings in
+                audioEngine.setCompressorSettingsForInactive(settings, identifier: identifier)
             },
             eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
             onEQChange: { settings in
