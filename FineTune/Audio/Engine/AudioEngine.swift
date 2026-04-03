@@ -600,9 +600,9 @@ final class AudioEngine {
         taps[app.id]?.audioLevel ?? 0.0
     }
 
-    /// Get realtime 10-band compressor/analyzer levels for a specific app.
-    func getCompressorBandLevels(for app: AudioApp) -> [Float] {
-        taps[app.id]?.compressorBandLevels ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
+    /// Get realtime 10-band levels for the active app signal at key DSP checkpoints.
+    func getRealtimeBandLevels(for app: AudioApp) -> RealtimeBandLevels {
+        taps[app.id]?.realtimeBandLevels ?? .zero
     }
 
     /// Enable lightweight per-band metering while the expanded EQ panel is visible.

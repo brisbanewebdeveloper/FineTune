@@ -11,7 +11,7 @@ struct EQSliderView: View {
     @State private var isDragging: Bool = false
 
     // Use design tokens for slider style variant support
-    private var trackWidth: CGFloat { DesignTokens.Dimensions.sliderTrackHeight }
+    private var trackWidth: CGFloat { DesignTokens.Dimensions.eqTrackWidth }
     private var thumbSize: CGFloat { DesignTokens.Dimensions.sliderThumbSize }
     private let tickCount = 5  // Number of tick marks
     private let tickWidth: CGFloat = 3

@@ -4,8 +4,31 @@ import SwiftUI
 /// A vertical VU meter visualization for audio levels
 /// Shows 8 bars that light up based on audio level with peak hold
 struct VUMeter: View {
+    enum Profile: Sendable {
+        case standard
+        case band
+
+        fileprivate var thresholds: [Float] {
+            switch self {
+            case .standard:
+                return Self.decibelThresholds([-40, -30, -20, -14, -10, -6, -3, 0])
+            case .band:
+                // The band analyzer emits lower, steadier values than the main app meter.
+                // Use a more sensitive response curve so live movement remains visible.
+                return Self.decibelThresholds([-50, -42, -35, -28, -22, -17, -13, -9])
+            }
+        }
+
+        private static func decibelThresholds(_ decibels: [Float]) -> [Float] {
+            decibels.map { powf(10, $0 / 20) }
+        }
+    }
+
     let level: Float
     var isMuted: Bool = false
+    var width: CGFloat = 10
+    var height: CGFloat = DesignTokens.Dimensions.rowContentHeight - 4
+    var profile: Profile = .standard
 
     @State private var peakLevel: Float = 0
     @State private var decayTask: Task<Void, Never>?
@@ -20,11 +43,12 @@ struct VUMeter: View {
                     level: level,
                     peakLevel: peakLevel,
                     barCount: barCount,
-                    isMuted: isMuted
+                    isMuted: isMuted,
+                    profile: profile
                 )
             }
         }
-        .frame(width: 10, height: DesignTokens.Dimensions.rowContentHeight - 4)
+        .frame(width: width, height: height)
         .onChange(of: level) { _, newLevel in
             if newLevel > peakLevel {
                 peakLevel = newLevel
@@ -62,6 +86,26 @@ struct VUMeter: View {
         decayTask?.cancel()
         decayTask = nil
     }
+
+    static func threshold(forBar index: Int, profile: Profile) -> Float {
+        let thresholds = profile.thresholds
+        return thresholds[min(max(index, 0), thresholds.count - 1)]
+    }
+
+    static func peakBarIndex(for level: Float, profile: Profile) -> Int {
+        let thresholds = profile.thresholds
+        var result = 0
+        for (index, threshold) in thresholds.enumerated() {
+            if level >= threshold {
+                result = index
+            }
+        }
+        return result
+    }
+
+    static func litBarCount(for level: Float, profile: Profile) -> Int {
+        profile.thresholds.filter { level >= $0 }.count
+    }
 }
 
 /// Individual bar in the VU meter
@@ -71,16 +115,11 @@ private struct VUMeterBar: View {
     let peakLevel: Float
     let barCount: Int
     var isMuted: Bool = false
-
-    /// dB thresholds for 8 bars covering 40dB range
-    /// Matches professional audio meter standards (logarithmic scale)
-    private static let dbThresholds: [Float] = [-40, -30, -20, -14, -10, -6, -3, 0]
+    let profile: VUMeter.Profile
 
     /// Threshold for this bar (0-1) using dB scale
-    /// Converts dB to linear: 10^(dB/20)
     private var threshold: Float {
-        let db = Self.dbThresholds[min(index, Self.dbThresholds.count - 1)]
-        return powf(10, db / 20)
+        VUMeter.threshold(forBar: index, profile: profile)
     }
 
     /// Whether this bar should be lit based on current level
@@ -90,15 +129,7 @@ private struct VUMeterBar: View {
 
     /// Whether this bar is the peak indicator
     private var isPeakIndicator: Bool {
-        // Find which bar the peak level falls into using dB thresholds
-        var peakBarIndex = 0
-        for i in 0..<Self.dbThresholds.count {
-            let thresh = powf(10, Self.dbThresholds[i] / 20)
-            if peakLevel >= thresh {
-                peakBarIndex = i
-            }
-        }
-        return index == peakBarIndex && peakLevel > level
+        index == VUMeter.peakBarIndex(for: peakLevel, profile: profile) && peakLevel > level
     }
 
     /// Color for this bar based on its position and mute state

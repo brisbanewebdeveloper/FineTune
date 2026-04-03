@@ -4,7 +4,7 @@ import SwiftUI
 struct EQPanelView: View {
     @Binding var settings: EQSettings
     let compressorSettings: CompressorSettings
-    let realtimeBandLevels: [Float]
+    let realtimeBandLevels: RealtimeBandLevels
     let showsRealtimeBandLevels: Bool
     let onPresetSelected: (EQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
@@ -14,15 +14,6 @@ struct EQPanelView: View {
     private var currentPreset: EQPreset? {
         EQPreset.allCases.first { preset in
             preset.settings.bandGains == settings.bandGains
-        }
-    }
-
-    private var normalizedBandLevels: [Float] {
-        let padded = Array(realtimeBandLevels.prefix(EQSettings.bandCount))
-        let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
-        return normalized.map { level in
-            guard level.isFinite else { return 0.0 }
-            return min(max(level, 0.0), 1.0)
         }
     }
 
@@ -62,13 +53,12 @@ struct EQPanelView: View {
             .zIndex(1)  // Ensure dropdown renders above sliders
 
             MultiBandLevelMeter(
-                levels: normalizedBandLevels,
-                isRealtimeAvailable: showsRealtimeBandLevels,
-                isCompressionEnabled: compressorSettings.isEnabled
+                levels: realtimeBandLevels,
+                isRealtimeAvailable: showsRealtimeBandLevels
             )
 
             // 10-band sliders
-            HStack(spacing: 22) {
+            HStack(spacing: DesignTokens.Dimensions.eqColumnSpacing) {
                 ForEach(0..<10, id: \.self) { index in
                     EQSliderView(
                         frequency: frequencyLabels[index],
@@ -80,7 +70,10 @@ struct EQPanelView: View {
                             }
                         )
                     )
-                    .frame(width: 26, height: 100)
+                    .frame(
+                        width: DesignTokens.Dimensions.eqColumnWidth,
+                        height: DesignTokens.Dimensions.eqSliderHeight
+                    )
                 }
             }
             .opacity(settings.isEnabled ? 1.0 : 0.3)
@@ -105,7 +98,7 @@ struct EQPanelView: View {
         EQPanelView(
             settings: .constant(EQSettings()),
             compressorSettings: .bypassed,
-            realtimeBandLevels: Array(repeating: Float.zero, count: EQSettings.bandCount),
+            realtimeBandLevels: .zero,
             showsRealtimeBandLevels: true,
             onPresetSelected: { _ in },
             onSettingsChanged: { _ in }

@@ -140,7 +140,7 @@ struct InactiveAppRow: View {
             EQPanelView(
                 settings: $localEQSettings,
                 compressorSettings: compressorSettings,
-                realtimeBandLevels: Array(repeating: Float.zero, count: EQSettings.bandCount),
+                realtimeBandLevels: .zero,
                 showsRealtimeBandLevels: false,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings

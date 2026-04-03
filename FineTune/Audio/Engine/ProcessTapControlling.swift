@@ -12,7 +12,7 @@ protocol ProcessTapControlling: AnyObject {
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
-    var compressorBandLevels: [Float] { get }
+    var realtimeBandLevels: RealtimeBandLevels { get }
     var currentDeviceUID: String? { get }
     var currentDeviceUIDs: [String] { get }
 
@@ -34,8 +34,8 @@ protocol ProcessTapControlling: AnyObject {
 }
 
 extension ProcessTapControlling {
-    var compressorBandLevels: [Float] {
-        Array(repeating: Float.zero, count: EQSettings.bandCount)
+    var realtimeBandLevels: RealtimeBandLevels {
+        .zero
     }
 
     /// Convenience: defaults sourceDeviceDead to false.

@@ -106,12 +106,18 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var compressorProcessor: MultiBandCompressorProcessor?
     private nonisolated(unsafe) var eqProcessor: EQProcessor?
     private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
+    private nonisolated(unsafe) var originalBandAnalyzer: MultiBandLevelAnalyzer?
+    private nonisolated(unsafe) var compressedBandAnalyzer: MultiBandLevelAnalyzer?
+    private nonisolated(unsafe) var equalizedBandAnalyzer: MultiBandLevelAnalyzer?
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
     private nonisolated(unsafe) var secondaryCompressorProcessor: MultiBandCompressorProcessor?
     private nonisolated(unsafe) var secondaryEQProcessor: EQProcessor?
     private nonisolated(unsafe) var secondaryAutoEQProcessor: AutoEQProcessor?
+    private nonisolated(unsafe) var secondaryOriginalBandAnalyzer: MultiBandLevelAnalyzer?
+    private nonisolated(unsafe) var secondaryCompressedBandAnalyzer: MultiBandLevelAnalyzer?
+    private nonisolated(unsafe) var secondaryEqualizedBandAnalyzer: MultiBandLevelAnalyzer?
     private var isBandMeteringEnabled = false
 
     // Target device UIDs for synchronized multi-output (first is clock source)
@@ -139,14 +145,20 @@ final class ProcessTapController: ProcessTapControlling {
 
     var audioLevel: Float { crossfadeState.isActive ? max(_peakLevel, _secondaryPeakLevel) : _peakLevel }
 
-    var compressorBandLevels: [Float] {
-        let primaryLevels = compressorProcessor?.bandLevelsSnapshot()
-            ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
+    var realtimeBandLevels: RealtimeBandLevels {
+        let primaryLevels = RealtimeBandLevels(
+            original: originalBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.original,
+            afterCompressor: compressedBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.afterCompressor,
+            afterEQ: equalizedBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.afterEQ
+        )
         guard crossfadeState.isActive else { return primaryLevels }
 
-        let secondaryLevels = secondaryCompressorProcessor?.bandLevelsSnapshot()
-            ?? Array(repeating: Float.zero, count: EQSettings.bandCount)
-        return zip(primaryLevels, secondaryLevels).map { max($0, $1) }
+        let secondaryLevels = RealtimeBandLevels(
+            original: secondaryOriginalBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.original,
+            afterCompressor: secondaryCompressedBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.afterCompressor,
+            afterEQ: secondaryEqualizedBandAnalyzer?.snapshot() ?? RealtimeBandLevels.zero.afterEQ
+        )
+        return primaryLevels.maxMerged(with: secondaryLevels)
     }
 
     private static let hostTimeNanosScale: Double = {
@@ -238,6 +250,12 @@ final class ProcessTapController: ProcessTapControlling {
         isBandMeteringEnabled = enabled
         compressorProcessor?.setMeteringEnabled(enabled)
         secondaryCompressorProcessor?.setMeteringEnabled(enabled)
+        originalBandAnalyzer?.setEnabled(enabled)
+        compressedBandAnalyzer?.setEnabled(enabled)
+        equalizedBandAnalyzer?.setEnabled(enabled)
+        secondaryOriginalBandAnalyzer?.setEnabled(enabled)
+        secondaryCompressedBandAnalyzer?.setEnabled(enabled)
+        secondaryEqualizedBandAnalyzer?.setEnabled(enabled)
     }
 
     func updateEQSettings(_ settings: EQSettings) {
@@ -445,6 +463,12 @@ final class ProcessTapController: ProcessTapControlling {
         compressorProcessor?.setMeteringEnabled(isBandMeteringEnabled)
         eqProcessor = EQProcessor(sampleRate: sampleRate)
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
+        originalBandAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        originalBandAnalyzer?.setEnabled(isBandMeteringEnabled)
+        compressedBandAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        compressedBandAnalyzer?.setEnabled(isBandMeteringEnabled)
+        equalizedBandAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        equalizedBandAnalyzer?.setEnabled(isBandMeteringEnabled)
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -642,6 +666,12 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
+        secondaryOriginalBandAnalyzer = nil
+        secondaryCompressedBandAnalyzer = nil
+        secondaryEqualizedBandAnalyzer = nil
+        originalBandAnalyzer = nil
+        compressedBandAnalyzer = nil
+        equalizedBandAnalyzer = nil
         _invalidating = false
     }
 
@@ -799,6 +829,18 @@ final class ProcessTapController: ProcessTapControlling {
         secCompressor.setMeteringEnabled(isBandMeteringEnabled)
         secondaryCompressorProcessor = secCompressor
 
+        let secOriginalAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        secOriginalAnalyzer.setEnabled(isBandMeteringEnabled)
+        secondaryOriginalBandAnalyzer = secOriginalAnalyzer
+
+        let secCompressedAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        secCompressedAnalyzer.setEnabled(isBandMeteringEnabled)
+        secondaryCompressedBandAnalyzer = secCompressedAnalyzer
+
+        let secEqualizedAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
+        secEqualizedAnalyzer.setEnabled(isBandMeteringEnabled)
+        secondaryEqualizedBandAnalyzer = secEqualizedAnalyzer
+
         let secEQ = EQProcessor(sampleRate: sampleRate)
         if let settings = eqProcessor?.currentSettings {
             secEQ.updateSettings(settings)
@@ -851,6 +893,9 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
+        secondaryOriginalBandAnalyzer = nil
+        secondaryCompressedBandAnalyzer = nil
+        secondaryEqualizedBandAnalyzer = nil
     }
 
     private func promoteSecondaryToPrimary() {
@@ -868,21 +913,33 @@ final class ProcessTapController: ProcessTapControlling {
         let oldCompressor = compressorProcessor
         let oldEQ = eqProcessor
         let oldAutoEQ = autoEQProcessor
+        let oldOriginalAnalyzer = originalBandAnalyzer
+        let oldCompressedAnalyzer = compressedBandAnalyzer
+        let oldEqualizedAnalyzer = equalizedBandAnalyzer
         compressorProcessor = secondaryCompressorProcessor
         eqProcessor = secondaryEQProcessor
         autoEQProcessor = secondaryAutoEQProcessor
+        originalBandAnalyzer = secondaryOriginalBandAnalyzer
+        compressedBandAnalyzer = secondaryCompressedBandAnalyzer
+        equalizedBandAnalyzer = secondaryEqualizedBandAnalyzer
         secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
+        secondaryOriginalBandAnalyzer = nil
+        secondaryCompressedBandAnalyzer = nil
+        secondaryEqualizedBandAnalyzer = nil
 
         // Deferred cleanup: hold old processors alive briefly so any in-flight RT callback
         // that read the pointer before the swap finishes its buffer without accessing freed memory.
         // 0.5s is conservative — audio callbacks run at ~5ms intervals.
-        if oldCompressor != nil || oldEQ != nil || oldAutoEQ != nil {
+        if oldCompressor != nil || oldEQ != nil || oldAutoEQ != nil || oldOriginalAnalyzer != nil || oldCompressedAnalyzer != nil || oldEqualizedAnalyzer != nil {
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
                 _ = oldCompressor
                 _ = oldEQ
                 _ = oldAutoEQ
+                _ = oldOriginalAnalyzer
+                _ = oldCompressedAnalyzer
+                _ = oldEqualizedAnalyzer
             }
         }
 
@@ -1015,6 +1072,9 @@ final class ProcessTapController: ProcessTapControlling {
             compressorProcessor?.updateSampleRate(deviceSampleRate)
             eqProcessor?.updateSampleRate(deviceSampleRate)
             autoEQProcessor?.updateSampleRate(deviceSampleRate)
+            originalBandAnalyzer?.updateSampleRate(deviceSampleRate)
+            compressedBandAnalyzer?.updateSampleRate(deviceSampleRate)
+            equalizedBandAnalyzer?.updateSampleRate(deviceSampleRate)
         }
     }
 
@@ -1034,7 +1094,10 @@ final class ProcessTapController: ProcessTapControlling {
         currentVol: inout Float,
         compressorProc: MultiBandCompressorProcessor?,
         eqProc: EQProcessor?,
-        autoEQProc: AutoEQProcessor?
+        autoEQProc: AutoEQProcessor?,
+        originalBandAnalyzer: MultiBandLevelAnalyzer? = nil,
+        compressedBandAnalyzer: MultiBandLevelAnalyzer? = nil,
+        equalizedBandAnalyzer: MultiBandLevelAnalyzer? = nil
     ) {
         let inputBufferCount = inputBuffers.count
         let outputBufferCount = outputBuffers.count
@@ -1083,6 +1146,9 @@ final class ProcessTapController: ProcessTapControlling {
             let compressorState = compressor?.processingState()
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
+            let originalBandState = originalBandAnalyzer?.processingState()
+            let compressedBandState = compressedBandAnalyzer?.processingState()
+            let equalizedBandState = equalizedBandAnalyzer?.processingState()
 
             if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
@@ -1095,17 +1161,61 @@ final class ProcessTapController: ProcessTapControlling {
                         let base = frame * 2
                         var left = inputSamples[base] * gain
                         var right = inputSamples[base + 1] * gain
+                        Self.analyzeBandFrame(
+                            with: originalBandAnalyzer,
+                            state: originalBandState,
+                            left: left,
+                            right: right
+                        )
                         if let compressor, let compressorState {
                             compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
                         }
+                        Self.analyzeBandFrame(
+                            with: compressedBandAnalyzer,
+                            state: compressedBandState,
+                            left: left,
+                            right: right
+                        )
                         outputSamples[base] = left
                         outputSamples[base + 1] = right
+                    }
+                } else if inputChannels == 1 {
+                    for frame in 0..<frameCount {
+                        currentVol += (targetVol - currentVol) * rampCoefficient
+                        let sample = inputSamples[frame] * currentVol * crossfadeMultiplier
+                        Self.analyzeBandFrame(
+                            with: originalBandAnalyzer,
+                            state: originalBandState,
+                            left: sample,
+                            right: sample
+                        )
+                        Self.analyzeBandFrame(
+                            with: compressedBandAnalyzer,
+                            state: compressedBandState,
+                            left: sample,
+                            right: sample
+                        )
+                        outputSamples[frame] = sample
                     }
                 } else {
                     for frame in 0..<frameCount {
                         currentVol += (targetVol - currentVol) * rampCoefficient
                         let gain = currentVol * crossfadeMultiplier
                         let base = frame * inputChannels
+                        let left = inputSamples[base] * gain
+                        let right = inputSamples[base + 1] * gain
+                        Self.analyzeBandFrame(
+                            with: originalBandAnalyzer,
+                            state: originalBandState,
+                            left: left,
+                            right: right
+                        )
+                        Self.analyzeBandFrame(
+                            with: compressedBandAnalyzer,
+                            state: compressedBandState,
+                            left: left,
+                            right: right
+                        )
                         for ch in 0..<inputChannels {
                             outputSamples[base + ch] = inputSamples[base + ch] * gain
                         }
@@ -1124,9 +1234,21 @@ final class ProcessTapController: ProcessTapControlling {
                     let outBase = frame * outputChannels
                     var left = inputSamples[inBase] * gain
                     var right = inputSamples[inBase + 1] * gain
+                    Self.analyzeBandFrame(
+                        with: originalBandAnalyzer,
+                        state: originalBandState,
+                        left: left,
+                        right: right
+                    )
                     if let compressor, let compressorState {
                         compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
                     }
+                    Self.analyzeBandFrame(
+                        with: compressedBandAnalyzer,
+                        state: compressedBandState,
+                        left: left,
+                        right: right
+                    )
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -1146,9 +1268,21 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier
                     var left = inputSamples[frame] * gain
                     var right = left
+                    Self.analyzeBandFrame(
+                        with: originalBandAnalyzer,
+                        state: originalBandState,
+                        left: left,
+                        right: right
+                    )
                     if let compressor, let compressorState {
                         compressor.processStereoFrame(left: &left, right: &right, state: compressorState)
                     }
+                    Self.analyzeBandFrame(
+                        with: compressedBandAnalyzer,
+                        state: compressedBandState,
+                        left: left,
+                        right: right
+                    )
                     let outBase = frame * outputChannels
 
                     for ch in 0..<outputChannels {
@@ -1168,6 +1302,20 @@ final class ProcessTapController: ProcessTapControlling {
                     let inBase = frame * inputChannels
                     let outBase = frame * outputChannels
                     let copiedChannels = min(inputChannels, outputChannels)
+                    let left = inputSamples[inBase] * gain
+                    let right = inputChannels > 1 ? inputSamples[inBase + 1] * gain : left
+                    Self.analyzeBandFrame(
+                        with: originalBandAnalyzer,
+                        state: originalBandState,
+                        left: left,
+                        right: right
+                    )
+                    Self.analyzeBandFrame(
+                        with: compressedBandAnalyzer,
+                        state: compressedBandState,
+                        left: left,
+                        right: right
+                    )
                     for ch in 0..<copiedChannels {
                         outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
                     }
@@ -1187,6 +1335,16 @@ final class ProcessTapController: ProcessTapControlling {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
+            Self.analyzeBandBuffer(
+                with: equalizedBandAnalyzer,
+                state: equalizedBandState,
+                samples: UnsafePointer(outputSamples),
+                frameCount: frameCount,
+                channelCount: outputChannels,
+                leftChannel: safeLeft,
+                rightChannel: safeRight
+            )
+
             // Per-device AutoEQ correction (after per-app EQ)
             if let autoEQProc, autoEQProc.isEnabled, eqCanProcessStereoInterleaved {
                 autoEQProc.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
@@ -1195,6 +1353,38 @@ final class ProcessTapController: ProcessTapControlling {
             let writtenSampleCount = frameCount * outputChannels
             SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
         }
+    }
+
+    @inline(__always)
+    private static func analyzeBandFrame(
+        with analyzer: MultiBandLevelAnalyzer?,
+        state: MultiBandLevelAnalyzer.ProcessingState?,
+        left: Float,
+        right: Float
+    ) {
+        guard let analyzer, let state else { return }
+        analyzer.processStereoFrame(left: left, right: right, state: state)
+    }
+
+    @inline(__always)
+    private static func analyzeBandBuffer(
+        with analyzer: MultiBandLevelAnalyzer?,
+        state: MultiBandLevelAnalyzer.ProcessingState?,
+        samples: UnsafePointer<Float>,
+        frameCount: Int,
+        channelCount: Int,
+        leftChannel: Int,
+        rightChannel: Int
+    ) {
+        guard let analyzer, let state else { return }
+        analyzer.processBuffer(
+            samples,
+            frameCount: frameCount,
+            channelCount: channelCount,
+            leftChannel: leftChannel,
+            rightChannel: rightChannel,
+            state: state
+        )
     }
 
     // MARK: - RT-Safe Audio Callback (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
@@ -1292,6 +1482,9 @@ final class ProcessTapController: ProcessTapControlling {
         let compressorProc: MultiBandCompressorProcessor?
         let eqProc: EQProcessor?
         let autoEQProc: AutoEQProcessor?
+        let originalBandMeter: MultiBandLevelAnalyzer?
+        let compressedBandMeter: MultiBandLevelAnalyzer?
+        let equalizedBandMeter: MultiBandLevelAnalyzer?
 
         if isPrimary {
             currentVol = _primaryCurrentVolume
@@ -1305,6 +1498,9 @@ final class ProcessTapController: ProcessTapControlling {
             compressorProc = compressorProcessor
             eqProc = eqProcessor
             autoEQProc = autoEQProcessor
+            originalBandMeter = originalBandAnalyzer
+            compressedBandMeter = compressedBandAnalyzer
+            equalizedBandMeter = equalizedBandAnalyzer
         } else {
             currentVol = _secondaryCurrentVolume
             // Secondary uses sine curve (0→1).
@@ -1316,6 +1512,9 @@ final class ProcessTapController: ProcessTapControlling {
             compressorProc = secondaryCompressorProcessor
             eqProc = secondaryEQProcessor
             autoEQProc = secondaryAutoEQProcessor
+            originalBandMeter = secondaryOriginalBandAnalyzer
+            compressedBandMeter = secondaryCompressedBandAnalyzer
+            equalizedBandMeter = secondaryEqualizedBandAnalyzer
         }
 
         Self.processMappedBuffers(
@@ -1329,7 +1528,10 @@ final class ProcessTapController: ProcessTapControlling {
             currentVol: &currentVol,
             compressorProc: compressorProc,
             eqProc: eqProc,
-            autoEQProc: autoEQProc
+            autoEQProc: autoEQProc,
+            originalBandAnalyzer: originalBandMeter,
+            compressedBandAnalyzer: compressedBandMeter,
+            equalizedBandAnalyzer: equalizedBandMeter
         )
 
         if isPrimary {

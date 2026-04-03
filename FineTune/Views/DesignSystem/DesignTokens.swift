@@ -249,6 +249,23 @@ enum DesignTokens {
         /// VU meter bar count
         static let vuMeterBarCount: Int = 8
 
+        // MARK: EQ Panel Layout
+
+        /// Shared column width for EQ sliders and multiband meters
+        static let eqColumnWidth: CGFloat = 26
+
+        /// Shared spacing between EQ columns
+        static let eqColumnSpacing: CGFloat = 22
+
+        /// Slider and meter track width so both visuals share the same centerline
+        static let eqTrackWidth: CGFloat = sliderTrackHeight
+
+        /// Height for each realtime multiband meter row
+        static let eqMeterHeight: CGFloat = 18
+
+        /// Standard EQ slider height inside the panel
+        static let eqSliderHeight: CGFloat = 100
+
         // MARK: Settings Row
 
         /// Settings row icon column width

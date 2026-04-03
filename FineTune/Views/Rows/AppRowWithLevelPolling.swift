@@ -1,6 +1,19 @@
 // FineTune/Views/Rows/AppRowWithLevelPolling.swift
 import SwiftUI
 
+struct AppRowBandMeteringState: Equatable {
+    private(set) var isEnabled = false
+
+    mutating func sync(isPopupVisible: Bool, isEQExpanded: Bool) -> Bool {
+        isEnabled = isPopupVisible && isEQExpanded
+        return isEnabled
+    }
+
+    func displayedLevels(from realtimeLevels: RealtimeBandLevels) -> RealtimeBandLevels {
+        isEnabled ? realtimeLevels.normalized() : .zero
+    }
+}
+
 /// App row that polls audio levels at regular intervals
 struct AppRowWithLevelPolling: View {
     let app: AudioApp
@@ -15,7 +28,7 @@ struct AppRowWithLevelPolling: View {
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
     let getAudioLevel: () -> Float
-    let getCompressorBandLevels: () -> [Float]
+    let getRealtimeBandLevels: () -> RealtimeBandLevels
     let setBandMeteringEnabled: (Bool) -> Void
     let isPopupVisible: Bool
     let onVolumeChange: (Float) -> Void
@@ -33,7 +46,8 @@ struct AppRowWithLevelPolling: View {
     let onEQToggle: () -> Void
 
     @State private var displayLevel: Float = 0
-    @State private var displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
+    @State private var displayBandLevels: RealtimeBandLevels = .zero
+    @State private var bandMeteringState = AppRowBandMeteringState()
     @State private var levelTimer: Timer?
 
     init(
@@ -49,7 +63,7 @@ struct AppRowWithLevelPolling: View {
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         getAudioLevel: @escaping () -> Float,
-        getCompressorBandLevels: @escaping () -> [Float] = { Array(repeating: Float.zero, count: EQSettings.bandCount) },
+        getRealtimeBandLevels: @escaping () -> RealtimeBandLevels = { .zero },
         setBandMeteringEnabled: @escaping (Bool) -> Void = { _ in },
         isPopupVisible: Bool = true,
         onVolumeChange: @escaping (Float) -> Void,
@@ -78,7 +92,7 @@ struct AppRowWithLevelPolling: View {
         self.boost = boost
         self.onBoostChange = onBoostChange
         self.getAudioLevel = getAudioLevel
-        self.getCompressorBandLevels = getCompressorBandLevels
+        self.getRealtimeBandLevels = getRealtimeBandLevels
         self.setBandMeteringEnabled = setBandMeteringEnabled
         self.isPopupVisible = isPopupVisible
         self.onVolumeChange = onVolumeChange
@@ -127,28 +141,28 @@ struct AppRowWithLevelPolling: View {
             onEQToggle: onEQToggle
         )
         .onAppear {
+            syncBandMeteringState(refreshImmediately: false)
             if isPopupVisible {
                 startLevelPolling()
             }
-            syncBandMeteringState()
         }
         .onDisappear {
             stopLevelPolling()
             setBandMeteringEnabled(false)
-            displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
+            displayBandLevels = .zero
         }
         .onChange(of: isPopupVisible) { _, visible in
             if visible {
+                syncBandMeteringState(refreshImmediately: false)
                 startLevelPolling()
-                refreshLevels()
             } else {
                 stopLevelPolling()
                 displayLevel = 0  // Reset meter when hidden
+                syncBandMeteringState(refreshImmediately: false)
             }
-            syncBandMeteringState()
         }
         .onChange(of: isEQExpanded) { _, _ in
-            syncBandMeteringState()
+            syncBandMeteringState(refreshImmediately: isPopupVisible)
         }
     }
 
@@ -173,30 +187,19 @@ struct AppRowWithLevelPolling: View {
 
     private func refreshLevels() {
         displayLevel = getAudioLevel()
-        displayBandLevels = isBandMeteringActive
-            ? normalizedBandLevels(getCompressorBandLevels())
-            : Array(repeating: Float.zero, count: EQSettings.bandCount)
+        displayBandLevels = bandMeteringState.displayedLevels(from: getRealtimeBandLevels())
     }
 
-    private func syncBandMeteringState() {
-        setBandMeteringEnabled(isBandMeteringActive)
-        if isBandMeteringActive {
+    private func syncBandMeteringState(refreshImmediately: Bool = true) {
+        let shouldEnableBandMetering = bandMeteringState.sync(
+            isPopupVisible: isPopupVisible,
+            isEQExpanded: isEQExpanded
+        )
+        setBandMeteringEnabled(shouldEnableBandMetering)
+        if shouldEnableBandMetering, refreshImmediately {
             refreshLevels()
         } else {
-            displayBandLevels = Array(repeating: Float.zero, count: EQSettings.bandCount)
-        }
-    }
-
-    private var isBandMeteringActive: Bool {
-        isPopupVisible && isEQExpanded
-    }
-
-    private func normalizedBandLevels(_ levels: [Float]) -> [Float] {
-        let padded = Array(levels.prefix(EQSettings.bandCount))
-        let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
-        return normalized.map { level in
-            guard level.isFinite else { return 0.0 }
-            return min(max(level, 0.0), 1.0)
+            displayBandLevels = .zero
         }
     }
 }

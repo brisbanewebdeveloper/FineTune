@@ -7,7 +7,7 @@ struct AppRow: View {
     let app: AudioApp
     let volume: Float  // Linear gain 0-1 (boost applied separately)
     let audioLevel: Float
-    let realtimeBandLevels: [Float]
+    let realtimeBandLevels: RealtimeBandLevels
     let showsRealtimeBandLevels: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String  // For single mode
@@ -39,7 +39,7 @@ struct AppRow: View {
         app: AudioApp,
         volume: Float,
         audioLevel: Float = 0,
-        realtimeBandLevels: [Float] = Array(repeating: Float.zero, count: EQSettings.bandCount),
+        realtimeBandLevels: RealtimeBandLevels = .zero,
         showsRealtimeBandLevels: Bool = true,
         devices: [AudioDevice],
         selectedDeviceUID: String,

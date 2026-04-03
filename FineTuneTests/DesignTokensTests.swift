@@ -95,6 +95,15 @@ struct DesignTokensDimensionTests {
         #expect(DesignTokens.Dimensions.vuMeterBarCount == 8)
     }
 
+    @Test("EQ panel columns share stable layout metrics")
+    func eqPanelMetrics() {
+        #expect(DesignTokens.Dimensions.eqColumnWidth > DesignTokens.Dimensions.eqTrackWidth)
+        #expect(DesignTokens.Dimensions.eqColumnSpacing > 0)
+        #expect(DesignTokens.Dimensions.eqMeterHeight > 0)
+        #expect(DesignTokens.Dimensions.eqSliderHeight > DesignTokens.Dimensions.eqMeterHeight)
+        #expect(DesignTokens.Dimensions.eqTrackWidth == DesignTokens.Dimensions.sliderTrackHeight)
+    }
+
     @Test("Min touch target is at least 16pt (Apple HIG minimum)")
     func minTouchTarget() {
         #expect(DesignTokens.Dimensions.minTouchTarget >= 16)

@@ -101,6 +101,7 @@ private func processWithDefaults(
     preferredStereoLeft: Int = 0,
     preferredStereoRight: Int = 1,
     currentVol: inout Float,
+    compressorProc: MultiBandCompressorProcessor? = nil,
     eqProc: EQProcessor? = nil,
     autoEQProc: AutoEQProcessor? = nil
 ) {
@@ -113,6 +114,7 @@ private func processWithDefaults(
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,
         currentVol: &currentVol,
+        compressorProc: compressorProc,
         eqProc: eqProc,
         autoEQProc: autoEQProc
     )

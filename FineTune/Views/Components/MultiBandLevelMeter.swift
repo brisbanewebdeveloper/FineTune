@@ -1,22 +1,27 @@
 import SwiftUI
 
 struct MultiBandLevelMeter: View {
-    let levels: [Float]
+    let levels: RealtimeBandLevels
     let isRealtimeAvailable: Bool
-    let isCompressionEnabled: Bool
 
-    private var normalizedLevels: [Float] {
-        let padded = Array(levels.prefix(EQSettings.bandCount))
-        let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
-        return normalized.map { level in
-            guard level.isFinite else { return 0.0 }
-            return min(max(level, 0.0), 1.0)
-        }
+    private struct MeterRowData: Identifiable {
+        let id: String
+        let label: String
+        let values: [Float]
     }
 
     private var statusText: String {
         guard isRealtimeAvailable else { return "Active apps show live band energy here" }
-        return isCompressionEnabled ? "Live post-compression band energy" : "Live band energy"
+        return "Hover a band meter to identify the processing stage"
+    }
+
+    private var meterRows: [MeterRowData] {
+        let normalized = levels.normalized()
+        return [
+            MeterRowData(id: "original", label: "Original", values: normalized.original),
+            MeterRowData(id: "compressor", label: "After Compressor", values: normalized.afterCompressor),
+            MeterRowData(id: "eq", label: "After EQ", values: normalized.afterEQ)
+        ]
     }
 
     var body: some View {
@@ -33,13 +38,22 @@ struct MultiBandLevelMeter: View {
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
             }
 
-            HStack(spacing: 22) {
-                ForEach(0..<EQSettings.bandCount, id: \.self) { index in
-                    MultiBandLevelColumn(
-                        level: normalizedLevels[index],
-                        isRealtimeAvailable: isRealtimeAvailable
-                    )
-                    .frame(width: 26, height: 34)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                ForEach(meterRows) { row in
+                    HStack(spacing: DesignTokens.Dimensions.eqColumnSpacing) {
+                        ForEach(0..<EQSettings.bandCount, id: \.self) { index in
+                            MultiBandLevelColumn(
+                                level: row.values[index],
+                                isRealtimeAvailable: isRealtimeAvailable
+                            )
+                            .frame(
+                                width: DesignTokens.Dimensions.eqColumnWidth,
+                                height: DesignTokens.Dimensions.eqMeterHeight
+                            )
+                            .help(row.label)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
         }
@@ -61,30 +75,44 @@ private struct MultiBandLevelColumn: View {
         endPoint: .top
     )
 
+    private var clampedLevel: CGFloat {
+        CGFloat(min(max(level, 0.0), 1.0))
+    }
+
+    private var displayedLevel: CGFloat {
+        guard clampedLevel > 0 else { return 0 }
+        // A mild perceptual curve keeps quieter band activity visibly moving.
+        return pow(clampedLevel, 0.6)
+    }
+
+    private var fillStyle: AnyShapeStyle {
+        isRealtimeAvailable
+            ? AnyShapeStyle(meterGradient)
+            : AnyShapeStyle(DesignTokens.Colors.vuMuted)
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let clampedLevel = CGFloat(min(max(level, 0.0), 1.0))
-            let fillHeight = geometry.size.height * clampedLevel
+            let fillHeight = geometry.size.height * displayedLevel
+            let trackWidth = DesignTokens.Dimensions.eqTrackWidth
 
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(DesignTokens.Colors.vuUnlit)
+                Capsule(style: .continuous)
+                    .fill(DesignTokens.Colors.sliderTrack.opacity(0.55))
+                    .frame(width: trackWidth)
 
                 Rectangle()
                     .fill(DesignTokens.Colors.unityMarker.opacity(0.35))
-                    .frame(height: 1)
-                    .offset(y: geometry.size.height * 0.2)
+                    .frame(width: trackWidth + 4, height: 1)
+                    .offset(y: geometry.size.height * 0.18)
 
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(meterGradient)
-                    .frame(height: fillHeight)
+                Capsule(style: .continuous)
+                    .fill(fillStyle)
+                    .frame(width: trackWidth, height: max(fillHeight, isRealtimeAvailable && displayedLevel > 0 ? 1 : 0))
                     .opacity(isRealtimeAvailable ? 1.0 : 0.35)
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
-            }
-            .animation(DesignTokens.Animation.vuMeterLevel, value: level)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(DesignTokens.Animation.vuMeterLevel, value: displayedLevel)
         }
     }
 }
@@ -92,9 +120,12 @@ private struct MultiBandLevelColumn: View {
 #Preview {
     VStack {
         MultiBandLevelMeter(
-            levels: [0.95, 0.82, 0.68, 0.42, 0.36, 0.28, 0.22, 0.18, 0.10, 0.05],
-            isRealtimeAvailable: true,
-            isCompressionEnabled: true
+            levels: RealtimeBandLevels(
+                original: [0.95, 0.82, 0.68, 0.42, 0.36, 0.28, 0.22, 0.18, 0.10, 0.05],
+                afterCompressor: [0.88, 0.76, 0.60, 0.40, 0.34, 0.27, 0.21, 0.18, 0.10, 0.05],
+                afterEQ: [0.76, 0.70, 0.58, 0.46, 0.38, 0.30, 0.25, 0.20, 0.11, 0.04]
+            ),
+            isRealtimeAvailable: true
         )
     }
     .padding()
