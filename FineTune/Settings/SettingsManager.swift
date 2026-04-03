@@ -58,8 +58,23 @@ struct AppSettings: Codable, Equatable {
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
 
+    // Device Volume
+    var softwareDeviceVolumeEnabled: Bool = false  // Software volume for unsupported output devices (opt-in)
+
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
+        defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
+        lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
+        softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
+        showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
+    }
 }
 
 // MARK: - Settings Manager
@@ -73,7 +88,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 8
+        var version: Int = 9
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -96,6 +111,11 @@ final class SettingsManager {
         var ddcMuteStates: [String: Bool] = [:]   // device UID → software mute state
         var ddcSavedVolumes: [String: Int] = [:]  // device UID → volume before mute
 
+        // Software-backed output volumes for devices without native volume control
+        var softwareDeviceVolumes: [String: Float] = [:]      // device UID → visible volume (0.0-1.0)
+        var softwareDeviceMuteStates: [String: Bool] = [:]    // device UID → software mute state
+        var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
+
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
@@ -109,7 +129,7 @@ final class SettingsManager {
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 8
+            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 9
             appVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }  // Clamp old volumes > 1.0 (boost is now per-app)
@@ -136,6 +156,13 @@ final class SettingsManager {
             ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
             ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
             ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
+            softwareDeviceVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceVolumes) ?? [:])
+                .filter { $0.value.isFinite && $0.value >= 0 }
+                .mapValues { min($0, 1.0) }
+            softwareDeviceMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .softwareDeviceMuteStates) ?? [:]
+            softwareDeviceSavedVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceSavedVolumes) ?? [:])
+                .filter { $0.value.isFinite && $0.value >= 0 }
+                .mapValues { min($0, 1.0) }
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
@@ -358,6 +385,35 @@ final class SettingsManager {
 
     func setDDCSavedVolume(for deviceUID: String, to volume: Int) {
         settings.ddcSavedVolumes[deviceUID] = volume
+        scheduleSave()
+    }
+
+    // MARK: - Software Output Device Volume
+
+    func getSoftwareDeviceVolume(for deviceUID: String) -> Float? {
+        settings.softwareDeviceVolumes[deviceUID]
+    }
+
+    func setSoftwareDeviceVolume(for deviceUID: String, to volume: Float) {
+        settings.softwareDeviceVolumes[deviceUID] = normalizedDeviceVolume(volume)
+        scheduleSave()
+    }
+
+    func getSoftwareDeviceMuteState(for deviceUID: String) -> Bool {
+        settings.softwareDeviceMuteStates[deviceUID] ?? false
+    }
+
+    func setSoftwareDeviceMuteState(for deviceUID: String, to muted: Bool) {
+        settings.softwareDeviceMuteStates[deviceUID] = muted
+        scheduleSave()
+    }
+
+    func getSoftwareDeviceSavedVolume(for deviceUID: String) -> Float? {
+        settings.softwareDeviceSavedVolumes[deviceUID]
+    }
+
+    func setSoftwareDeviceSavedVolume(for deviceUID: String, to volume: Float) {
+        settings.softwareDeviceSavedVolumes[deviceUID] = normalizedDeviceVolume(volume)
         scheduleSave()
     }
 
@@ -612,6 +668,9 @@ final class SettingsManager {
         settings.ddcVolumes.removeAll()
         settings.ddcMuteStates.removeAll()
         settings.ddcSavedVolumes.removeAll()
+        settings.softwareDeviceVolumes.removeAll()
+        settings.softwareDeviceMuteStates.removeAll()
+        settings.softwareDeviceSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
         settings.autoEQPreampEnabled = true
@@ -688,5 +747,10 @@ final class SettingsManager {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+    }
+
+    private func normalizedDeviceVolume(_ volume: Float) -> Float {
+        guard volume.isFinite else { return 1.0 }
+        return max(0.0, min(1.0, volume))
     }
 }

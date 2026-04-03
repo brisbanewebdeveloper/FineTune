@@ -158,6 +158,9 @@ struct MenuBarPopupView: View {
             if !oldValue.lockInputDevice && newValue.lockInputDevice {
                 audioEngine.handleInputLockEnabled()
             }
+            if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
+                audioEngine.handleSoftwareVolumeSettingChanged()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -521,6 +524,7 @@ struct MenuBarPopupView: View {
                     let profileName: String? = {
                         guard let sel = selection else { return nil }
                         return audioEngine.autoEQProfileManager.profile(for: sel.profileID)?.name
+                            ?? audioEngine.autoEQProfileManager.catalogEntry(for: sel.profileID)?.name
                     }()
 
                     DeviceRow(
@@ -541,8 +545,8 @@ struct MenuBarPopupView: View {
                         },
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,
-                        onAutoEQToggle: {
-                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: !(selection?.isEnabled ?? false))
+                        onAutoEQToggle: { enabled in
+                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: enabled)
                         },
                         autoEQProfileManager: audioEngine.autoEQProfileManager,
                         autoEQSelection: selection,
