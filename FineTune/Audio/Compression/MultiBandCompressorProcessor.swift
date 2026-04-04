@@ -170,6 +170,12 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
 
     @inline(__always)
     func processStereoFrame(left: inout Float, right: inout Float, state: ProcessingState) {
+        processStereoFrameForBuffer(left: &left, right: &right, state: state)
+        refreshDisplayLevels(state: state)
+    }
+
+    @inline(__always)
+    func processStereoFrameForBuffer(left: inout Float, right: inout Float, state: ProcessingState) {
         left = processSample(
             left,
             state: state,
@@ -188,10 +194,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
             resetState()
             left = 0.0
             right = 0.0
-            return
         }
-
-        updateDisplayLevels(state: state)
     }
 
     private func processSample(
@@ -271,7 +274,7 @@ final class MultiBandCompressorProcessor: @unchecked Sendable {
     }
 
     @inline(__always)
-    private func updateDisplayLevels(state: ProcessingState) {
+    func refreshDisplayLevels(state: ProcessingState) {
         for index in 0..<MultiBandCompressionMath.bandCount {
             let envelope = max(envelopesL[index], envelopesR[index])
             let gain = MultiBandCompressionMath.compressedGain(

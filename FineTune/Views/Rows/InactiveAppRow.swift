@@ -28,6 +28,8 @@ struct InactiveAppRow: View {
     let onSelectFollowDefault: () -> Void
     let compressorSettings: CompressorSettings
     let onCompressionChange: (CompressorSettings) -> Void
+    let syncLagMilliseconds: Float
+    let onSyncLagChange: (Float) -> Void
     let eqSettings: EQSettings
     let userPresets: [UserEQPreset]
     let onEQChange: (EQSettings) -> Void
@@ -62,6 +64,8 @@ struct InactiveAppRow: View {
         onSelectFollowDefault: @escaping () -> Void = {},
         compressorSettings: CompressorSettings = .bypassed,
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
+        syncLagMilliseconds: Float = 0,
+        onSyncLagChange: @escaping (Float) -> Void = { _ in },
         eqSettings: EQSettings = EQSettings(),
         userPresets: [UserEQPreset] = [],
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
@@ -93,6 +97,8 @@ struct InactiveAppRow: View {
         self.onSelectFollowDefault = onSelectFollowDefault
         self.compressorSettings = compressorSettings
         self.onCompressionChange = onCompressionChange
+        self.syncLagMilliseconds = syncLagMilliseconds
+        self.onSyncLagChange = onSyncLagChange
         self.eqSettings = eqSettings
         self.userPresets = userPresets
         self.onEQChange = onEQChange
@@ -139,11 +145,13 @@ struct InactiveAppRow: View {
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
                     compressorSettings: compressorSettings,
+                    syncLagMilliseconds: syncLagMilliseconds,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onBoostChange: onBoostChange,
                     onCompressionChange: onCompressionChange,
+                    onSyncLagChange: onSyncLagChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,

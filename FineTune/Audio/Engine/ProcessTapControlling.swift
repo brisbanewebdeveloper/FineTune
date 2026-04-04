@@ -22,6 +22,7 @@ protocol ProcessTapControlling: AnyObject {
     func updateCompressorSettings(_ settings: CompressorSettings)
     func setBandMeteringEnabled(_ enabled: Bool)
     func updateEQSettings(_ settings: EQSettings)
+    func updateSyncLag(_ lagMilliseconds: Float)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
@@ -53,6 +54,10 @@ extension ProcessTapControlling {
     }
 
     func setBandMeteringEnabled(_ enabled: Bool) {
+        // Default no-op for mocks that don't override.
+    }
+
+    func updateSyncLag(_ lagMilliseconds: Float) {
         // Default no-op for mocks that don't override.
     }
 

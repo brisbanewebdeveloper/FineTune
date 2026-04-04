@@ -39,6 +39,8 @@ struct AppRowWithLevelPolling: View {
     let onSelectFollowDefault: () -> Void
     let compressorSettings: CompressorSettings
     let onCompressionChange: (CompressorSettings) -> Void
+    let syncLagMilliseconds: Float
+    let onSyncLagChange: (Float) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let userPresets: [UserEQPreset]
@@ -80,6 +82,8 @@ struct AppRowWithLevelPolling: View {
         onSelectFollowDefault: @escaping () -> Void = {},
         compressorSettings: CompressorSettings = .bypassed,
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
+        syncLagMilliseconds: Float = 0,
+        onSyncLagChange: @escaping (Float) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         userPresets: [UserEQPreset] = [],
@@ -115,6 +119,8 @@ struct AppRowWithLevelPolling: View {
         self.onSelectFollowDefault = onSelectFollowDefault
         self.compressorSettings = compressorSettings
         self.onCompressionChange = onCompressionChange
+        self.syncLagMilliseconds = syncLagMilliseconds
+        self.onSyncLagChange = onSyncLagChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.userPresets = userPresets
@@ -152,6 +158,8 @@ struct AppRowWithLevelPolling: View {
             onSelectFollowDefault: onSelectFollowDefault,
             compressorSettings: compressorSettings,
             onCompressionChange: onCompressionChange,
+            syncLagMilliseconds: syncLagMilliseconds,
+            onSyncLagChange: onSyncLagChange,
             onAppActivate: onAppActivate,
             eqSettings: eqSettings,
             userPresets: userPresets,

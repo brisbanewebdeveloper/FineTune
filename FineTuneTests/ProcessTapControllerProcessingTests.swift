@@ -292,6 +292,45 @@ final class ProcessTapControllerProcessingTests: XCTestCase {
         XCTAssertNotEqual(actualLevels.afterCompressor, actualLevels.afterEQ)
     }
 
+    @MainActor
+    func testBandAnalyzerBufferedPathMatchesPerFrameProcessing() throws {
+        let perFrameAnalyzer = MultiBandLevelAnalyzer(sampleRate: 48_000)
+        perFrameAnalyzer.setEnabled(true)
+        let bufferedAnalyzer = MultiBandLevelAnalyzer(sampleRate: 48_000)
+        bufferedAnalyzer.setEnabled(true)
+
+        let perFrameState = try XCTUnwrap(perFrameAnalyzer.processingState())
+        let bufferedState = try XCTUnwrap(bufferedAnalyzer.processingState())
+        let samples: [Float] = [
+            0.10, 0.01, 0.20, 0.02,
+            0.80, 0.03, 0.70, 0.04,
+            0.22, 0.05, 0.18, 0.06,
+            0.68, 0.07, 0.54, 0.08
+        ]
+
+        for frame in stride(from: 0, to: samples.count, by: 4) {
+            perFrameAnalyzer.processStereoFrame(
+                left: samples[frame],
+                right: samples[frame + 2],
+                state: perFrameState
+            )
+        }
+
+        try samples.withUnsafeBufferPointer { bufferPointer in
+            let baseAddress = try XCTUnwrap(bufferPointer.baseAddress)
+            bufferedAnalyzer.processBuffer(
+                baseAddress,
+                frameCount: samples.count / 4,
+                channelCount: 4,
+                leftChannel: 0,
+                rightChannel: 2,
+                state: bufferedState
+            )
+        }
+
+        XCTAssertBandRowsEqual(perFrameAnalyzer.snapshot(), bufferedAnalyzer.snapshot())
+    }
+
     private func analyzeStereoFrames(_ samples: [Float], with analyzer: MultiBandLevelAnalyzer) {
         guard let state = analyzer.processingState() else {
             XCTFail("Expected analyzer processing state")

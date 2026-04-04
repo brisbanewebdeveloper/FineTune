@@ -104,9 +104,14 @@ final class MultiBandLevelAnalyzer: @unchecked Sendable {
 
     @inline(__always)
     func processStereoFrame(left: Float, right: Float, state: ProcessingState) {
+        processStereoFrameForBuffer(left: left, right: right, state: state)
+        refreshDisplayLevels()
+    }
+
+    @inline(__always)
+    func processStereoFrameForBuffer(left: Float, right: Float, state: ProcessingState) {
         analyzeSample(left, state: state, states: statesL, envelopes: envelopesL)
         analyzeSample(right, state: state, states: statesR, envelopes: envelopesR)
-        updateDisplayLevels()
     }
 
     @inline(__always)
@@ -127,8 +132,10 @@ final class MultiBandLevelAnalyzer: @unchecked Sendable {
             let base = frame * channelCount
             let left = samples[base + safeLeft]
             let right = samples[base + safeRight]
-            processStereoFrame(left: left, right: right, state: state)
+            processStereoFrameForBuffer(left: left, right: right, state: state)
         }
+
+        refreshDisplayLevels()
     }
 
     private func updateCoefficients(for sampleRate: Double) {
@@ -190,7 +197,7 @@ final class MultiBandLevelAnalyzer: @unchecked Sendable {
     }
 
     @inline(__always)
-    private func updateDisplayLevels() {
+    func refreshDisplayLevels() {
         for index in 0..<MultiBandCompressionMath.bandCount {
             let level = max(envelopesL[index], envelopesR[index])
             displayLevels[index] = level.isFinite ? min(max(level, 0.0), 1.0) : 0.0

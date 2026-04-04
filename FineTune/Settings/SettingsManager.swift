@@ -53,6 +53,24 @@ enum BandMeterAggregationMode: String, Codable, CaseIterable, Identifiable, Cust
     var description: String { rawValue }
 }
 
+enum AudioSyncLagRange {
+    static let minMilliseconds: Float = 0
+    static let maxMilliseconds: Float = 250
+
+    static func clamp(_ value: Float) -> Float {
+        guard value.isFinite else { return 0 }
+        return max(minMilliseconds, min(maxMilliseconds, value))
+    }
+}
+
+private func normalizedSyncLagMap(_ values: [String: Float]) -> [String: Float] {
+    values.reduce(into: [:]) { partialResult, entry in
+        let normalized = AudioSyncLagRange.clamp(entry.value)
+        guard normalized > 0 else { return }
+        partialResult[entry.key] = normalized
+    }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -100,6 +118,7 @@ final class SettingsManager {
     struct Settings: Codable {
         var version: Int = 10
         var appVolumes: [String: Float] = [:]
+        var appSyncLagMs: [String: Float] = [:]  // bundleID/name identifier → lag in milliseconds
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
@@ -125,6 +144,7 @@ final class SettingsManager {
         var softwareDeviceVolumes: [String: Float] = [:]      // device UID → visible volume (0.0-1.0)
         var softwareDeviceMuteStates: [String: Bool] = [:]    // device UID → software mute state
         var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
+        var deviceSyncLagMs: [String: Float] = [:]  // device UID → lag in milliseconds
 
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
@@ -146,6 +166,7 @@ final class SettingsManager {
             appVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }  // Clamp old volumes > 1.0 (boost is now per-app)
+            appSyncLagMs = normalizedSyncLagMap(try c.decodeIfPresent([String: Float].self, forKey: .appSyncLagMs) ?? [:])
             appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
@@ -176,6 +197,7 @@ final class SettingsManager {
             softwareDeviceSavedVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceSavedVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
+            deviceSyncLagMs = normalizedSyncLagMap(try c.decodeIfPresent([String: Float].self, forKey: .deviceSyncLagMs) ?? [:])
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
@@ -198,6 +220,20 @@ final class SettingsManager {
 
     func setVolume(for identifier: String, to volume: Float) {
         settings.appVolumes[identifier] = volume
+        scheduleSave()
+    }
+
+    func getAppSyncLag(for identifier: String) -> Float {
+        settings.appSyncLagMs[identifier] ?? 0
+    }
+
+    func setAppSyncLag(for identifier: String, to lagMilliseconds: Float) {
+        let normalized = AudioSyncLagRange.clamp(lagMilliseconds)
+        if normalized > 0 {
+            settings.appSyncLagMs[identifier] = normalized
+        } else {
+            settings.appSyncLagMs.removeValue(forKey: identifier)
+        }
         scheduleSave()
     }
 
@@ -431,6 +467,20 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    func getDeviceSyncLag(for deviceUID: String) -> Float {
+        settings.deviceSyncLagMs[deviceUID] ?? 0
+    }
+
+    func setDeviceSyncLag(for deviceUID: String, to lagMilliseconds: Float) {
+        let normalized = AudioSyncLagRange.clamp(lagMilliseconds)
+        if normalized > 0 {
+            settings.deviceSyncLagMs[deviceUID] = normalized
+        } else {
+            settings.deviceSyncLagMs.removeValue(forKey: deviceUID)
+        }
+        scheduleSave()
+    }
+
     // MARK: - Device Priority
 
     var devicePriorityOrder: [String] {
@@ -534,6 +584,7 @@ final class SettingsManager {
     /// - Parameter activeIdentifiers: Persistence identifiers of currently active apps.
     func pruneStaleSettings(keeping activeIdentifiers: Set<String>) {
         let allIdentifiers = Set(settings.appVolumes.keys)
+            .union(settings.appSyncLagMs.keys)
             .union(settings.appBoosts.keys)
             .union(settings.appMutes.keys)
             .union(settings.appCompressorSettings.keys)
@@ -552,6 +603,7 @@ final class SettingsManager {
 
             // Check if all remaining settings are default values
             let volume = settings.appVolumes[identifier]
+            let syncLag = settings.appSyncLagMs[identifier]
             let mute = settings.appMutes[identifier]
             let compressor = settings.appCompressorSettings[identifier]
             let eq = settings.appEQSettings[identifier]
@@ -561,6 +613,7 @@ final class SettingsManager {
             let boost = settings.appBoosts[identifier]
 
             let isDefaultVolume = volume == nil || volume == 1.0
+            let isDefaultSyncLag = syncLag == nil || syncLag == 0
             let isDefaultBoost = boost == nil || boost == BoostLevel.x1.rawValue
             let isDefaultMute = mute == nil || mute == false
             let isDefaultCompressor = compressor == nil || compressor == .bypassed
@@ -568,13 +621,14 @@ final class SettingsManager {
             let isDefaultSelectionMode = selectionMode == nil
             let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
 
-            guard isDefaultVolume && isDefaultBoost && isDefaultMute && isDefaultCompressor && isDefaultEQ
+            guard isDefaultVolume && isDefaultSyncLag && isDefaultBoost && isDefaultMute && isDefaultCompressor && isDefaultEQ
                     && isDefaultSelectionMode && isDefaultSelectedUIDs else {
                 continue
             }
 
             // All values are defaults — safe to prune
             settings.appVolumes.removeValue(forKey: identifier)
+            settings.appSyncLagMs.removeValue(forKey: identifier)
             settings.appBoosts.removeValue(forKey: identifier)
             settings.appMutes.removeValue(forKey: identifier)
             settings.appCompressorSettings.removeValue(forKey: identifier)
@@ -696,6 +750,7 @@ final class SettingsManager {
     /// Resets all per-app settings and app-wide settings to defaults
     func resetAllSettings() {
         settings.appVolumes.removeAll()
+        settings.appSyncLagMs.removeAll()
         settings.appBoosts.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
@@ -715,6 +770,7 @@ final class SettingsManager {
         settings.softwareDeviceVolumes.removeAll()
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
+        settings.deviceSyncLagMs.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
         settings.autoEQPreampEnabled = true

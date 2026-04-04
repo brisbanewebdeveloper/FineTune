@@ -9,9 +9,11 @@ struct DeviceRow: View {
     let volume: Float
     let isMuted: Bool
     let hasVolumeControl: Bool
+    let syncLagMilliseconds: Float
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
+    let onSyncLagChange: (Float) -> Void
 
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
@@ -46,9 +48,11 @@ struct DeviceRow: View {
         volume: Float,
         isMuted: Bool,
         hasVolumeControl: Bool = true,
+        syncLagMilliseconds: Float = 0,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
+        onSyncLagChange: @escaping (Float) -> Void = { _ in },
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
         onAutoEQToggle: ((Bool) -> Void)? = nil,
@@ -67,9 +71,11 @@ struct DeviceRow: View {
         self.volume = volume
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
+        self.syncLagMilliseconds = syncLagMilliseconds
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.onSyncLagChange = onSyncLagChange
         self.autoEQProfileName = autoEQProfileName
         self.autoEQEnabled = autoEQEnabled
         self.onAutoEQToggle = onAutoEQToggle
@@ -86,7 +92,16 @@ struct DeviceRow: View {
     }
 
     var body: some View {
-        deviceHeader
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+            deviceHeader
+            SyncLagControl(
+                lagMilliseconds: syncLagMilliseconds,
+                sliderWidth: DesignTokens.Dimensions.sliderWidth,
+                label: "Device audio sync lag",
+                onLagChange: onSyncLagChange
+            )
+            .padding(.leading, DesignTokens.Dimensions.minTouchTarget + DesignTokens.Dimensions.iconSize + DesignTokens.Spacing.sm * 2)
+        }
             .hoverableRow()
     }
 

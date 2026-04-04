@@ -19,7 +19,9 @@ struct SettingsJSONTests {
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
         #expect(decoded.version == original.version)
         #expect(decoded.appVolumes == original.appVolumes)
+        #expect(decoded.appSyncLagMs == original.appSyncLagMs)
         #expect(decoded.appMutes == original.appMutes)
+        #expect(decoded.deviceSyncLagMs == original.deviceSyncLagMs)
         #expect(decoded.systemSoundsFollowsDefault == original.systemSoundsFollowsDefault)
     }
 
@@ -27,6 +29,7 @@ struct SettingsJSONTests {
     func populatedRoundTrip() throws {
         var original = SettingsManager.Settings()
         original.appVolumes = ["com.test.app": 0.5]
+        original.appSyncLagMs = ["com.test.app": 42]
         original.appMutes = ["com.test.app": true]
         original.appBoosts = ["com.test.app": 2.0]
         original.appDeviceRouting = ["com.test.app": "device-uid-123"]
@@ -35,12 +38,14 @@ struct SettingsJSONTests {
         original.outputDevicePriority = ["uid-a", "uid-b", "uid-c"]
         original.ddcVolumes = ["monitor-1": 75]
         original.ddcMuteStates = ["monitor-1": false]
+        original.deviceSyncLagMs = ["device-uid-123": 64]
         original.autoEQPreampEnabled = false
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
 
         #expect(decoded.appVolumes == original.appVolumes)
+        #expect(decoded.appSyncLagMs == original.appSyncLagMs)
         #expect(decoded.appMutes == original.appMutes)
         #expect(decoded.appBoosts == original.appBoosts)
         #expect(decoded.appDeviceRouting == original.appDeviceRouting)
@@ -49,6 +54,7 @@ struct SettingsJSONTests {
         #expect(decoded.outputDevicePriority == original.outputDevicePriority)
         #expect(decoded.ddcVolumes == original.ddcVolumes)
         #expect(decoded.ddcMuteStates == original.ddcMuteStates)
+        #expect(decoded.deviceSyncLagMs == original.deviceSyncLagMs)
         #expect(decoded.autoEQPreampEnabled == false)
     }
 
@@ -59,7 +65,9 @@ struct SettingsJSONTests {
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
         #expect(decoded.version == 9)
         #expect(decoded.appVolumes.isEmpty)
+        #expect(decoded.appSyncLagMs.isEmpty)
         #expect(decoded.appMutes.isEmpty)
+        #expect(decoded.deviceSyncLagMs.isEmpty)
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
         #expect(decoded.systemSoundsFollowsDefault == true)
         #expect(decoded.autoEQPreampEnabled == true)
@@ -124,6 +132,34 @@ struct SettingsJSONTests {
                 "Negative defaultNewAppVolume should be reset to 1.0")
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
     }
+
+        @Test("Sync lag values clamp to supported range on decode")
+        func syncLagValuesClampOnDecode() throws {
+                let json = """
+                {
+                    "appSyncLagMs": {
+                        "app.good": 25,
+                        "app.high": 999,
+                        "app.negative": -10
+                    },
+                    "deviceSyncLagMs": {
+                        "device.good": 120,
+                        "device.high": 400,
+                        "device.nan": 0
+                    }
+                }
+                """
+
+                let data = Data(json.utf8)
+                let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
+
+                #expect(decoded.appSyncLagMs["app.good"] == 25)
+                #expect(decoded.appSyncLagMs["app.high"] == AudioSyncLagRange.maxMilliseconds)
+                #expect(decoded.appSyncLagMs["app.negative"] == nil)
+                #expect(decoded.deviceSyncLagMs["device.good"] == 120)
+                #expect(decoded.deviceSyncLagMs["device.high"] == AudioSyncLagRange.maxMilliseconds)
+                #expect(decoded.deviceSyncLagMs["device.nan"] == nil)
+        }
 }
 
 // MARK: - mergePriorityOrder

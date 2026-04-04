@@ -2,6 +2,57 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum MenuBarPopupWindowFocus {
+    static func isPopupOwnedWindow(_ window: NSWindow, popupWindow: NSWindow?) -> Bool {
+        guard let popupWindow else { return false }
+        return window === popupWindow || window.parent === popupWindow
+    }
+
+    static func shouldHandlePopupResign(resigningWindow: NSWindow, popupWindow: NSWindow?) -> Bool {
+        guard let popupWindow else { return false }
+        guard resigningWindow === popupWindow else { return false }
+        return popupWindow.childWindows?.isEmpty ?? true
+    }
+}
+
+private struct WindowReferenceReader: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> WindowReferenceView {
+        WindowReferenceView(onResolve: onResolve)
+    }
+
+    func updateNSView(_ nsView: WindowReferenceView, context: Context) {
+        nsView.onResolve = onResolve
+        nsView.resolveWindow()
+    }
+}
+
+private final class WindowReferenceView: NSView {
+    var onResolve: (NSWindow?) -> Void
+
+    init(onResolve: @escaping (NSWindow?) -> Void) {
+        self.onResolve = onResolve
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resolveWindow()
+    }
+
+    func resolveWindow() {
+        DispatchQueue.main.async { [weak self] in
+            self?.onResolve(self?.window)
+        }
+    }
+}
+
 struct MenuBarPopupView: View {
     @Bindable var audioEngine: AudioEngine
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
@@ -30,6 +81,9 @@ struct MenuBarPopupView: View {
 
     /// Track popup visibility to pause VU meter polling when hidden
     @State private var isPopupVisible = true
+
+    /// The menu bar popup window hosting this view.
+    @State private var popupWindow: NSWindow?
 
     /// Error message shown when AutoEQ profile import fails
     @State private var autoEQImportError: String?
@@ -171,15 +225,20 @@ struct MenuBarPopupView: View {
         .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
             updateSortedDevices()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            isPopupVisible = true
-            audioEngine.bluetoothDeviceMonitor.refresh()
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            handleWindowDidBecomeKey(notification)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
-            isPopupVisible = false
-            exitEditModeSaving()
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+            handleWindowDidResignKey(notification)
         }
         .background {
+            WindowReferenceReader { window in
+                if popupWindow !== window {
+                    popupWindow = window
+                }
+            }
+            .allowsHitTesting(false)
+
             // Hidden button to handle ⌘, keyboard shortcut for toggling settings
             Button("") { toggleSettings() }
                 .keyboardShortcut(",", modifiers: .command)
@@ -242,13 +301,37 @@ struct MenuBarPopupView: View {
         } else if isEditingDevicePriority {
             toggleDevicePriorityEdit()
         } else if expandedRowID != nil {
-            // Collapse any expanded app EQ panel
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedRowID = nil
-            }
+            collapseExpandedEQIfNeeded()
         } else {
             NSApp.keyWindow?.resignKey()
         }
+    }
+
+    private func collapseExpandedEQIfNeeded() {
+        guard expandedRowID != nil else { return }
+
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            expandedRowID = nil
+        }
+    }
+
+    private func handleWindowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        guard MenuBarPopupWindowFocus.isPopupOwnedWindow(window, popupWindow: popupWindow) else { return }
+
+        isPopupVisible = true
+        if window === popupWindow {
+            audioEngine.bluetoothDeviceMonitor.refresh()
+        }
+    }
+
+    private func handleWindowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        guard MenuBarPopupWindowFocus.shouldHandlePopupResign(resigningWindow: window, popupWindow: popupWindow) else { return }
+
+        isPopupVisible = false
+        collapseExpandedEQIfNeeded()
+        exitEditModeSaving()
     }
 
     private func toggleSettings() {
@@ -533,6 +616,7 @@ struct MenuBarPopupView: View {
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
+                        syncLagMilliseconds: audioEngine.getDeviceSyncLag(for: device.uid),
                         onSetDefault: {
                             audioEngine.setDefaultOutputDevice(device.id)
                         },
@@ -542,6 +626,9 @@ struct MenuBarPopupView: View {
                         onMuteToggle: {
                             let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
                             deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
+                        },
+                        onSyncLagChange: { lag in
+                            audioEngine.setDeviceSyncLag(for: device.uid, to: lag)
                         },
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,
@@ -775,6 +862,10 @@ struct MenuBarPopupView: View {
                 onCompressionChange: { settings in
                     audioEngine.setCompressorSettings(settings, for: app)
                 },
+                syncLagMilliseconds: audioEngine.getAppSyncLag(for: app),
+                onSyncLagChange: { lag in
+                    audioEngine.setAppSyncLag(for: app, to: lag)
+                },
                 onAppActivate: {
                     activateApp(pid: app.id, bundleID: app.bundleID)
                 },
@@ -848,6 +939,10 @@ struct MenuBarPopupView: View {
             compressorSettings: audioEngine.getCompressorSettingsForInactive(identifier: identifier),
             onCompressionChange: { settings in
                 audioEngine.setCompressorSettingsForInactive(settings, identifier: identifier)
+            },
+            syncLagMilliseconds: audioEngine.getAppSyncLagForInactive(identifier: identifier),
+            onSyncLagChange: { lag in
+                audioEngine.setAppSyncLagForInactive(identifier: identifier, to: lag)
             },
             eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
             userPresets: userPresets,

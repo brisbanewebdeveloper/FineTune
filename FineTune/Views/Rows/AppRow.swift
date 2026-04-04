@@ -26,6 +26,8 @@ struct AppRow: View {
     let onSelectFollowDefault: () -> Void
     let compressorSettings: CompressorSettings
     let onCompressionChange: (CompressorSettings) -> Void
+    let syncLagMilliseconds: Float
+    let onSyncLagChange: (Float) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let userPresets: [UserEQPreset]
@@ -64,6 +66,8 @@ struct AppRow: View {
         onSelectFollowDefault: @escaping () -> Void = {},
         compressorSettings: CompressorSettings = .bypassed,
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
+        syncLagMilliseconds: Float = 0,
+        onSyncLagChange: @escaping (Float) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         userPresets: [UserEQPreset] = [],
@@ -98,6 +102,8 @@ struct AppRow: View {
         self.onSelectFollowDefault = onSelectFollowDefault
         self.compressorSettings = compressorSettings
         self.onCompressionChange = onCompressionChange
+        self.syncLagMilliseconds = syncLagMilliseconds
+        self.onSyncLagChange = onSyncLagChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.userPresets = userPresets
@@ -158,11 +164,13 @@ struct AppRow: View {
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
                     compressorSettings: compressorSettings,
+                    syncLagMilliseconds: syncLagMilliseconds,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onBoostChange: onBoostChange,
                     onCompressionChange: onCompressionChange,
+                    onSyncLagChange: onSyncLagChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,

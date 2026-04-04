@@ -508,6 +508,14 @@ final class AudioEngine {
         settingsManager.setVolume(for: identifier, to: volume)
     }
 
+    func getAppSyncLagForInactive(identifier: String) -> Float {
+        settingsManager.getAppSyncLag(for: identifier)
+    }
+
+    func setAppSyncLagForInactive(identifier: String, to lagMilliseconds: Float) {
+        settingsManager.setAppSyncLag(for: identifier, to: lagMilliseconds)
+    }
+
     func getBoostForInactive(identifier: String) -> BoostLevel {
         settingsManager.getBoost(for: identifier) ?? .x1
     }
@@ -729,6 +737,7 @@ final class AudioEngine {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
+        tap.updateSyncLag(effectiveSyncLag(for: tap.app.persistenceIdentifier, deviceUIDs: resolvedUIDs))
 
         if let primaryUID = resolvedUIDs.first,
            let device = deviceMonitor.device(for: primaryUID) {
@@ -746,6 +755,18 @@ final class AudioEngine {
         }
     }
 
+    private func applyDeviceSyncLagToTaps(for deviceUID: String) {
+        for tap in taps.values where tap.currentDeviceUIDs.first == deviceUID {
+            applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
+    }
+
+    private func effectiveSyncLag(for identifier: String, deviceUIDs: [String]) -> Float {
+        let appLag = settingsManager.getAppSyncLag(for: identifier)
+        let deviceLag = deviceUIDs.first.map { settingsManager.getDeviceSyncLag(for: $0) } ?? 0
+        return AudioSyncLagRange.clamp(appLag + deviceLag)
+    }
+
     /// Called when the software device volume setting is toggled.
     /// Recalculates tap gains so software volume is applied or stripped immediately.
     func handleSoftwareVolumeSettingChanged() {
@@ -760,6 +781,26 @@ final class AudioEngine {
 
     func getMute(for app: AudioApp) -> Bool {
         volumeState.getMute(for: app.id)
+    }
+
+    func getAppSyncLag(for app: AudioApp) -> Float {
+        settingsManager.getAppSyncLag(for: app.persistenceIdentifier)
+    }
+
+    func setAppSyncLag(for app: AudioApp, to lagMilliseconds: Float) {
+        settingsManager.setAppSyncLag(for: app.persistenceIdentifier, to: lagMilliseconds)
+        if let tap = taps[app.id] {
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
+    }
+
+    func getDeviceSyncLag(for deviceUID: String) -> Float {
+        settingsManager.getDeviceSyncLag(for: deviceUID)
+    }
+
+    func setDeviceSyncLag(for deviceUID: String, to lagMilliseconds: Float) {
+        settingsManager.setDeviceSyncLag(for: deviceUID, to: lagMilliseconds)
+        applyDeviceSyncLagToTaps(for: deviceUID)
     }
 
     /// Update compressor settings for an app

@@ -5,6 +5,7 @@ import SwiftUI
 /// Used by both AppRow (active apps) and InactiveAppRow (pinned inactive apps).
 struct AppRowControls: View {
     private static let compressionSliderWidth = DesignTokens.Dimensions.sliderWidth - DesignTokens.Dimensions.minTouchTarget - DesignTokens.Spacing.xs
+    private static let syncLagSliderWidth = compressionSliderWidth
 
     let volume: Float
     let isMuted: Bool
@@ -16,11 +17,13 @@ struct AppRowControls: View {
     let deviceSelectionMode: DeviceSelectionMode
     let boost: BoostLevel
     let compressorSettings: CompressorSettings
+    let syncLagMilliseconds: Float
     let isEQExpanded: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onBoostChange: (BoostLevel) -> Void
     let onCompressionChange: (CompressorSettings) -> Void
+    let onSyncLagChange: (Float) -> Void
     let onDeviceSelected: (String) -> Void
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
@@ -88,6 +91,13 @@ struct AppRowControls: View {
                     settings: compressorSettings,
                     sliderWidth: Self.compressionSliderWidth,
                     onSettingsChange: onCompressionChange
+                )
+
+                SyncLagControl(
+                    lagMilliseconds: syncLagMilliseconds,
+                    sliderWidth: Self.syncLagSliderWidth,
+                    label: "App audio sync lag",
+                    onLagChange: onSyncLagChange
                 )
             }
 

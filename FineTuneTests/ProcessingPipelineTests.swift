@@ -797,6 +797,84 @@ struct ProcessingChainTests {
     }
 }
 
+// MARK: - Audio Sync Delay Tests
+
+@Suite("AudioSyncDelayProcessor — Buffer Delay")
+struct AudioSyncDelayProcessorTests {
+
+    @Test("Zero lag leaves rendered output unchanged")
+    func zeroLagIsPassthrough() {
+        let output = TestABL(buffers: [(channels: 2, frames: 4)])
+        let samples = output.data(at: 0)
+        for index in 0..<8 {
+            samples[index] = Float(index + 1) * 0.1
+        }
+
+        let processor = AudioSyncDelayProcessor(sampleRate: 1_000, channelCounts: [2], lagMilliseconds: 0)
+        processor.process(output.bufferList)
+
+        for index in 0..<8 {
+            #expect(abs(samples[index] - (Float(index + 1) * 0.1)) < 1e-6,
+                    "Zero lag should not alter sample \(index)")
+        }
+    }
+
+    @Test("Lag equal to one buffer outputs silence first then prior buffer")
+    func fullBufferLagDelaysAcrossCallbacks() {
+        let frames = 4
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        let processor = AudioSyncDelayProcessor(sampleRate: 1_000, channelCounts: [2], lagMilliseconds: 4)
+
+        let firstPass = output.data(at: 0)
+        for index in 0..<(frames * 2) {
+            firstPass[index] = 0.25
+        }
+
+        processor.process(output.bufferList)
+
+        for index in 0..<(frames * 2) {
+            #expect(firstPass[index] == 0,
+                    "Initial delayed buffer should be silent at sample \(index)")
+        }
+
+        let secondPass = output.data(at: 0)
+        for index in 0..<(frames * 2) {
+            secondPass[index] = 0.75
+        }
+
+        processor.process(output.bufferList)
+
+        for index in 0..<(frames * 2) {
+            #expect(abs(secondPass[index] - 0.25) < 1e-6,
+                    "Second buffer should emit delayed first-buffer sample at index \(index)")
+        }
+    }
+
+    @Test("Changing lag resets buffered history")
+    func lagChangeResetsHistory() {
+        let output = TestABL(buffers: [(channels: 2, frames: 2)])
+        let processor = AudioSyncDelayProcessor(sampleRate: 1_000, channelCounts: [2], lagMilliseconds: 2)
+        let samples = output.data(at: 0)
+
+        for index in 0..<4 {
+            samples[index] = 0.5
+        }
+        processor.process(output.bufferList)
+
+        processor.update(lagMilliseconds: 1)
+
+        for index in 0..<4 {
+            samples[index] = 0.9
+        }
+        processor.process(output.bufferList)
+
+        for index in 0..<2 {
+            #expect(samples[index] == 0,
+                    "Lag reset should clear prior history before new delayed output at sample \(index)")
+        }
+    }
+}
+
 // MARK: - BiquadProcessor Tests
 
 @Suite("BiquadProcessor — Safety and Bypass")
