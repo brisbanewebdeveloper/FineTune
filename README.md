@@ -1,3 +1,13 @@
+## Extra Features
+
+- **Loudness normalization** — Evens out quieter apps before other processing so playback starts from a more consistent perceived volume.
+- **Multiband compression** — Applies per-app dynamic range control across the full 10-band processing pipeline with adjustable intensity.
+- **Realtime band metering** — Visualizes live per-band signal levels so you can see how compression and EQ are affecting playback.
+- **Band meter aggregation modes** — Switches the meter summary between average and peak views for different monitoring styles.
+- **Audio sync lag control** — Adds per-output delay adjustment in milliseconds to help align playback across routed devices.
+
+---
+
 <img src="assets/icon.png" width="170" height="170" alt="FineTune app icon" align="left"/>
 
 <h3>FineTune</h3>
