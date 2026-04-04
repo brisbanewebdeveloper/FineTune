@@ -261,7 +261,7 @@ enum DesignTokens {
         static let eqTrackWidth: CGFloat = sliderTrackHeight
 
         /// Height for each realtime multiband meter row
-        static let eqMeterHeight: CGFloat = 18
+        static let eqMeterHeight: CGFloat = 26
 
         /// Standard EQ slider height inside the panel
         static let eqSliderHeight: CGFloat = 100

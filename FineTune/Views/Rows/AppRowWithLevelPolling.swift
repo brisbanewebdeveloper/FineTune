@@ -42,6 +42,7 @@ struct AppRowWithLevelPolling: View {
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
+    let bandMeterAggregationMode: BandMeterAggregationMode
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -77,6 +78,7 @@ struct AppRowWithLevelPolling: View {
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        bandMeterAggregationMode: BandMeterAggregationMode = .average,
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -106,6 +108,7 @@ struct AppRowWithLevelPolling: View {
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
+        self.bandMeterAggregationMode = bandMeterAggregationMode
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
     }
@@ -137,6 +140,7 @@ struct AppRowWithLevelPolling: View {
             onAppActivate: onAppActivate,
             eqSettings: eqSettings,
             onEQChange: onEQChange,
+            bandMeterAggregationMode: bandMeterAggregationMode,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle
         )

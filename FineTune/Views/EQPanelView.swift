@@ -6,6 +6,7 @@ struct EQPanelView: View {
     let compressorSettings: CompressorSettings
     let realtimeBandLevels: RealtimeBandLevels
     let showsRealtimeBandLevels: Bool
+    let bandMeterAggregationMode: BandMeterAggregationMode
     let onPresetSelected: (EQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
 
@@ -54,7 +55,8 @@ struct EQPanelView: View {
 
             MultiBandLevelMeter(
                 levels: realtimeBandLevels,
-                isRealtimeAvailable: showsRealtimeBandLevels
+                isRealtimeAvailable: showsRealtimeBandLevels,
+                aggregationMode: bandMeterAggregationMode
             )
 
             // 10-band sliders
@@ -100,6 +102,7 @@ struct EQPanelView: View {
             compressorSettings: .bypassed,
             realtimeBandLevels: .zero,
             showsRealtimeBandLevels: true,
+            bandMeterAggregationMode: .average,
             onPresetSelected: { _ in },
             onSettingsChanged: { _ in }
         )

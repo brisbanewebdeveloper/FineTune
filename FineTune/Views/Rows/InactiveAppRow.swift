@@ -30,6 +30,7 @@ struct InactiveAppRow: View {
     let onCompressionChange: (CompressorSettings) -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
+    let bandMeterAggregationMode: BandMeterAggregationMode
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -58,6 +59,7 @@ struct InactiveAppRow: View {
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        bandMeterAggregationMode: BandMeterAggregationMode = .average,
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -83,6 +85,7 @@ struct InactiveAppRow: View {
         self.onCompressionChange = onCompressionChange
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
+        self.bandMeterAggregationMode = bandMeterAggregationMode
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self._localEQSettings = State(initialValue: eqSettings)
@@ -142,6 +145,7 @@ struct InactiveAppRow: View {
                 compressorSettings: compressorSettings,
                 realtimeBandLevels: .zero,
                 showsRealtimeBandLevels: false,
+                bandMeterAggregationMode: bandMeterAggregationMode,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)

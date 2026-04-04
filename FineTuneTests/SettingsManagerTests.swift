@@ -30,6 +30,7 @@ struct SettingsJSONTests {
         original.appMutes = ["com.test.app": true]
         original.appBoosts = ["com.test.app": 2.0]
         original.appDeviceRouting = ["com.test.app": "device-uid-123"]
+        original.appSettings.bandMeterAggregationMode = .peak
         original.pinnedApps = Set(["com.test.app"])
         original.outputDevicePriority = ["uid-a", "uid-b", "uid-c"]
         original.ddcVolumes = ["monitor-1": 75]
@@ -43,6 +44,7 @@ struct SettingsJSONTests {
         #expect(decoded.appMutes == original.appMutes)
         #expect(decoded.appBoosts == original.appBoosts)
         #expect(decoded.appDeviceRouting == original.appDeviceRouting)
+        #expect(decoded.appSettings.bandMeterAggregationMode == .peak)
         #expect(decoded.pinnedApps == original.pinnedApps)
         #expect(decoded.outputDevicePriority == original.outputDevicePriority)
         #expect(decoded.ddcVolumes == original.ddcVolumes)
@@ -58,6 +60,7 @@ struct SettingsJSONTests {
         #expect(decoded.version == 9)
         #expect(decoded.appVolumes.isEmpty)
         #expect(decoded.appMutes.isEmpty)
+        #expect(decoded.appSettings.bandMeterAggregationMode == .average)
         #expect(decoded.systemSoundsFollowsDefault == true)
         #expect(decoded.autoEQPreampEnabled == true)
     }
@@ -111,7 +114,6 @@ struct SettingsJSONTests {
 
     @Test("Invalid defaultNewAppVolume is reset to 1.0 on decode")
     func invalidDefaultVolumeReset() throws {
-        // AppSettings uses auto-synthesized Codable — all keys required.
         // MenuBarIconStyle raw value is capitalized ("Default", not "default").
         let json = """
         {"appSettings": {"launchAtLogin": false, "menuBarIconStyle": "Default", "defaultNewAppVolume": -5.0, "lockInputDevice": true, "showDeviceDisconnectAlerts": true}}
@@ -120,6 +122,7 @@ struct SettingsJSONTests {
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
         #expect(decoded.appSettings.defaultNewAppVolume == 1.0,
                 "Negative defaultNewAppVolume should be reset to 1.0")
+        #expect(decoded.appSettings.bandMeterAggregationMode == .average)
     }
 }
 
@@ -215,8 +218,39 @@ struct AppSettingsDefaultTests {
         #expect(settings.launchAtLogin == false)
         #expect(settings.menuBarIconStyle == .default)
         #expect(settings.defaultNewAppVolume == 1.0)
+        #expect(settings.bandMeterAggregationMode == .average)
         #expect(settings.lockInputDevice == true)
         #expect(settings.showDeviceDisconnectAlerts == true)
+    }
+
+    @Test("Missing band meter aggregation mode defaults to average when decoding saved settings")
+    func missingBandMeterAggregationModeDefaults() throws {
+        let json = """
+        {"appSettings": {"launchAtLogin": false, "menuBarIconStyle": "Default", "defaultNewAppVolume": 1.0, "lockInputDevice": true, "softwareDeviceVolumeEnabled": false, "showDeviceDisconnectAlerts": true}}
+        """
+        let data = Data(json.utf8)
+        let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
+        #expect(decoded.appSettings.bandMeterAggregationMode == .average)
+    }
+}
+
+// MARK: - BandMeterAggregationMode
+
+@Suite("BandMeterAggregationMode — Enumeration")
+struct BandMeterAggregationModeTests {
+
+    @Test("allCases exposes Average and Peak")
+    func allCases() {
+        #expect(BandMeterAggregationMode.allCases == [.average, .peak])
+    }
+
+    @Test("Round-trip through JSON Codable")
+    func codableRoundTrip() throws {
+        for mode in BandMeterAggregationMode.allCases {
+            let data = try JSONEncoder().encode(mode)
+            let decoded = try JSONDecoder().decode(BandMeterAggregationMode.self, from: data)
+            #expect(decoded == mode)
+        }
     }
 }
 

@@ -781,6 +781,7 @@ struct MenuBarPopupView: View {
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
                 },
+                bandMeterAggregationMode: localAppSettings.bandMeterAggregationMode,
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
@@ -835,6 +836,7 @@ struct MenuBarPopupView: View {
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
             },
+            bandMeterAggregationMode: localAppSettings.bandMeterAggregationMode,
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)

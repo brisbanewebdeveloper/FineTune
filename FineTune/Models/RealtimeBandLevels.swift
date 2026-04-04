@@ -1,5 +1,12 @@
 import Foundation
 
+struct ConsolidatedRealtimeBandLevels: Equatable, Sendable {
+    let afterCompressor: Float
+    let eqGap: Float
+
+    static let zero = ConsolidatedRealtimeBandLevels(afterCompressor: 0.0, eqGap: 0.0)
+}
+
 struct RealtimeBandLevels: Equatable, Sendable {
     let original: [Float]
     let afterCompressor: [Float]
@@ -27,6 +34,18 @@ struct RealtimeBandLevels: Equatable, Sendable {
         )
     }
 
+    func consolidated(using aggregationMode: BandMeterAggregationMode) -> ConsolidatedRealtimeBandLevels {
+        let normalizedLevels = normalized()
+        let eqGapLevels = zip(normalizedLevels.afterCompressor, normalizedLevels.afterEQ).map { compressor, eq in
+            abs(eq - compressor)
+        }
+
+        return ConsolidatedRealtimeBandLevels(
+            afterCompressor: Self.aggregatedLevel(normalizedLevels.afterCompressor, using: aggregationMode),
+            eqGap: Self.aggregatedLevel(eqGapLevels, using: aggregationMode)
+        )
+    }
+
     private static func normalizedRow(_ levels: [Float]) -> [Float] {
         let padded = Array(levels.prefix(EQSettings.bandCount))
         let normalized = padded + Array(repeating: Float.zero, count: max(0, EQSettings.bandCount - padded.count))
@@ -40,5 +59,16 @@ struct RealtimeBandLevels: Equatable, Sendable {
         let left = normalizedRow(lhs)
         let right = normalizedRow(rhs)
         return zip(left, right).map(max)
+    }
+
+    private static func aggregatedLevel(_ levels: [Float], using aggregationMode: BandMeterAggregationMode) -> Float {
+        guard !levels.isEmpty else { return 0.0 }
+
+        switch aggregationMode {
+        case .average:
+            return levels.reduce(0.0, +) / Float(levels.count)
+        case .peak:
+            return levels.max() ?? 0.0
+        }
     }
 }

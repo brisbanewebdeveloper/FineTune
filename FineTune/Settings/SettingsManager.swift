@@ -45,6 +45,14 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum BandMeterAggregationMode: String, Codable, CaseIterable, Identifiable, CustomStringConvertible, Sendable {
+    case average = "Average"
+    case peak = "Peak"
+
+    var id: String { rawValue }
+    var description: String { rawValue }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -54,6 +62,7 @@ struct AppSettings: Codable, Equatable {
 
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
+    var bandMeterAggregationMode: BandMeterAggregationMode = .average
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
@@ -71,6 +80,7 @@ struct AppSettings: Codable, Equatable {
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
+        bandMeterAggregationMode = try c.decodeIfPresent(BandMeterAggregationMode.self, forKey: .bandMeterAggregationMode) ?? .average
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true

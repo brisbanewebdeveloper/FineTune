@@ -29,6 +29,7 @@ struct AppRow: View {
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
+    let bandMeterAggregationMode: BandMeterAggregationMode
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -61,6 +62,7 @@ struct AppRow: View {
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        bandMeterAggregationMode: BandMeterAggregationMode = .average,
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -89,6 +91,7 @@ struct AppRow: View {
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
+        self.bandMeterAggregationMode = bandMeterAggregationMode
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         // Initialize local EQ state for reactive UI updates
@@ -161,6 +164,7 @@ struct AppRow: View {
                 compressorSettings: compressorSettings,
                 realtimeBandLevels: realtimeBandLevels,
                 showsRealtimeBandLevels: showsRealtimeBandLevels,
+                bandMeterAggregationMode: bandMeterAggregationMode,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)
