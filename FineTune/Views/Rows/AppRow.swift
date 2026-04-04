@@ -28,8 +28,13 @@ struct AppRow: View {
     let onCompressionChange: (CompressorSettings) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
+    let userPresets: [UserEQPreset]
     let onEQChange: (EQSettings) -> Void
     let bandMeterAggregationMode: BandMeterAggregationMode
+    let onUserPresetSelected: (UserEQPreset) -> Void
+    let onSavePreset: (String, EQSettings) -> Void
+    let onDeleteUserPreset: (UUID) -> Void
+    let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -61,8 +66,13 @@ struct AppRow: View {
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
+        userPresets: [UserEQPreset] = [],
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         bandMeterAggregationMode: BandMeterAggregationMode = .average,
+        onUserPresetSelected: @escaping (UserEQPreset) -> Void = { _ in },
+        onSavePreset: @escaping (String, EQSettings) -> Void = { _, _ in },
+        onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
+        onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -90,8 +100,13 @@ struct AppRow: View {
         self.onCompressionChange = onCompressionChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
+        self.userPresets = userPresets
         self.onEQChange = onEQChange
         self.bandMeterAggregationMode = bandMeterAggregationMode
+        self.onUserPresetSelected = onUserPresetSelected
+        self.onSavePreset = onSavePreset
+        self.onDeleteUserPreset = onDeleteUserPreset
+        self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         // Initialize local EQ state for reactive UI updates
@@ -165,13 +180,21 @@ struct AppRow: View {
                 realtimeBandLevels: realtimeBandLevels,
                 showsRealtimeBandLevels: showsRealtimeBandLevels,
                 bandMeterAggregationMode: bandMeterAggregationMode,
+                userPresets: userPresets,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)
                 },
+                onUserPresetSelected: { userPreset in
+                    localEQSettings = userPreset.settings
+                    onUserPresetSelected(userPreset)
+                },
                 onSettingsChanged: { settings in
                     onEQChange(settings)
-                }
+                },
+                onSavePreset: onSavePreset,
+                onDeleteUserPreset: onDeleteUserPreset,
+                onRenameUserPreset: onRenameUserPreset
             )
             .padding(.top, DesignTokens.Spacing.sm)
         }

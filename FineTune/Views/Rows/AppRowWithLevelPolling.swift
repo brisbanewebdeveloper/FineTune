@@ -41,8 +41,13 @@ struct AppRowWithLevelPolling: View {
     let onCompressionChange: (CompressorSettings) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
+    let userPresets: [UserEQPreset]
     let onEQChange: (EQSettings) -> Void
     let bandMeterAggregationMode: BandMeterAggregationMode
+    let onUserPresetSelected: (UserEQPreset) -> Void
+    let onSavePreset: (String, EQSettings) -> Void
+    let onDeleteUserPreset: (UUID) -> Void
+    let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -77,8 +82,13 @@ struct AppRowWithLevelPolling: View {
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
+        userPresets: [UserEQPreset] = [],
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         bandMeterAggregationMode: BandMeterAggregationMode = .average,
+        onUserPresetSelected: @escaping (UserEQPreset) -> Void = { _ in },
+        onSavePreset: @escaping (String, EQSettings) -> Void = { _, _ in },
+        onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
+        onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -107,8 +117,13 @@ struct AppRowWithLevelPolling: View {
         self.onCompressionChange = onCompressionChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
+        self.userPresets = userPresets
         self.onEQChange = onEQChange
         self.bandMeterAggregationMode = bandMeterAggregationMode
+        self.onUserPresetSelected = onUserPresetSelected
+        self.onSavePreset = onSavePreset
+        self.onDeleteUserPreset = onDeleteUserPreset
+        self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
     }
@@ -139,8 +154,13 @@ struct AppRowWithLevelPolling: View {
             onCompressionChange: onCompressionChange,
             onAppActivate: onAppActivate,
             eqSettings: eqSettings,
+            userPresets: userPresets,
             onEQChange: onEQChange,
             bandMeterAggregationMode: bandMeterAggregationMode,
+            onUserPresetSelected: onUserPresetSelected,
+            onSavePreset: onSavePreset,
+            onDeleteUserPreset: onDeleteUserPreset,
+            onRenameUserPreset: onRenameUserPreset,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle
         )

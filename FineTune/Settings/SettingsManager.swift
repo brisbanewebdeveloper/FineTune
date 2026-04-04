@@ -98,7 +98,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 9
+        var version: Int = 10
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -134,6 +134,9 @@ final class SettingsManager {
         var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
         var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
         var autoEQPreampEnabled: Bool = true  // Use profile preamp vs bypass (rely on limiter)
+
+        // User-created EQ presets (named EQ curves)
+        var userEQPresets: [UserEQPreset] = []
 
         init() {}
 
@@ -178,6 +181,7 @@ final class SettingsManager {
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
             favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
             autoEQPreampEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoEQPreampEnabled) ?? true
+            userEQPresets = try c.decodeIfPresent([UserEQPreset].self, forKey: .userEQPresets) ?? []
         }
     }
 
@@ -623,6 +627,36 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - User EQ Presets
+
+    /// Returns all user-created EQ presets, ordered by creation date (newest first).
+    func getUserPresets() -> [UserEQPreset] {
+        settings.userEQPresets.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Creates a new user EQ preset with the given name and band gains.
+    /// Returns the created preset.
+    @discardableResult
+    func createUserPreset(name: String, settings eqSettings: EQSettings) -> UserEQPreset {
+        let preset = UserEQPreset(name: name, settings: eqSettings)
+        settings.userEQPresets.append(preset)
+        scheduleSave()
+        return preset
+    }
+
+    /// Renames an existing user preset. No-op if the preset ID is not found.
+    func updateUserPreset(id: UUID, name: String) {
+        guard let index = settings.userEQPresets.firstIndex(where: { $0.id == id }) else { return }
+        settings.userEQPresets[index].name = name
+        scheduleSave()
+    }
+
+    /// Deletes a user preset by ID. No-op if the preset ID is not found.
+    func deleteUserPreset(id: UUID) {
+        settings.userEQPresets.removeAll { $0.id == id }
+        scheduleSave()
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -688,6 +722,7 @@ final class SettingsManager {
         settings.favoriteAutoEQProfiles.removeAll()
         settings.appDeviceSelectionMode.removeAll()
         settings.appSelectedDeviceUIDs.removeAll()
+        settings.userEQPresets.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
