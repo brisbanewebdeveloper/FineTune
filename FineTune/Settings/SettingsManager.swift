@@ -122,6 +122,7 @@ final class SettingsManager {
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
+        var appNormalizationSettings: [String: NormalizationSettings] = [:]  // bundleID → normalization settings
         var appCompressorSettings: [String: CompressorSettings] = [:]  // bundleID → compressor settings
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
@@ -170,6 +171,7 @@ final class SettingsManager {
             appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
+            appNormalizationSettings = try c.decodeIfPresent([String: NormalizationSettings].self, forKey: .appNormalizationSettings) ?? [:]
             appCompressorSettings = try c.decodeIfPresent([String: CompressorSettings].self, forKey: .appCompressorSettings) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
@@ -291,6 +293,15 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    func getNormalizationSettings(for appIdentifier: String) -> NormalizationSettings {
+        settings.appNormalizationSettings[appIdentifier] ?? .bypassed
+    }
+
+    func setNormalizationSettings(_ normalizationSettings: NormalizationSettings, for appIdentifier: String) {
+        settings.appNormalizationSettings[appIdentifier] = normalizationSettings
+        scheduleSave()
+    }
+
     func getCompressorSettings(for appIdentifier: String) -> CompressorSettings {
         settings.appCompressorSettings[appIdentifier] ?? .bypassed
     }
@@ -387,6 +398,7 @@ final class SettingsManager {
         settings.appVolumes.removeValue(forKey: identifier)
         settings.appBoosts.removeValue(forKey: identifier)
         settings.appMutes.removeValue(forKey: identifier)
+        settings.appNormalizationSettings.removeValue(forKey: identifier)
         settings.appCompressorSettings.removeValue(forKey: identifier)
         settings.appDeviceRouting.removeValue(forKey: identifier)
         settings.appEQSettings.removeValue(forKey: identifier)
@@ -587,6 +599,7 @@ final class SettingsManager {
             .union(settings.appSyncLagMs.keys)
             .union(settings.appBoosts.keys)
             .union(settings.appMutes.keys)
+            .union(settings.appNormalizationSettings.keys)
             .union(settings.appCompressorSettings.keys)
             .union(settings.appEQSettings.keys)
             .union(settings.appDeviceSelectionMode.keys)
@@ -605,6 +618,7 @@ final class SettingsManager {
             let volume = settings.appVolumes[identifier]
             let syncLag = settings.appSyncLagMs[identifier]
             let mute = settings.appMutes[identifier]
+            let normalization = settings.appNormalizationSettings[identifier]
             let compressor = settings.appCompressorSettings[identifier]
             let eq = settings.appEQSettings[identifier]
             let selectionMode = settings.appDeviceSelectionMode[identifier]
@@ -616,12 +630,13 @@ final class SettingsManager {
             let isDefaultSyncLag = syncLag == nil || syncLag == 0
             let isDefaultBoost = boost == nil || boost == BoostLevel.x1.rawValue
             let isDefaultMute = mute == nil || mute == false
+            let isDefaultNormalization = normalization == nil || normalization == .bypassed
             let isDefaultCompressor = compressor == nil || compressor == .bypassed
             let isDefaultEQ = eq == nil || eq == .flat
             let isDefaultSelectionMode = selectionMode == nil
             let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
 
-            guard isDefaultVolume && isDefaultSyncLag && isDefaultBoost && isDefaultMute && isDefaultCompressor && isDefaultEQ
+            guard isDefaultVolume && isDefaultSyncLag && isDefaultBoost && isDefaultMute && isDefaultNormalization && isDefaultCompressor && isDefaultEQ
                     && isDefaultSelectionMode && isDefaultSelectedUIDs else {
                 continue
             }
@@ -631,6 +646,7 @@ final class SettingsManager {
             settings.appSyncLagMs.removeValue(forKey: identifier)
             settings.appBoosts.removeValue(forKey: identifier)
             settings.appMutes.removeValue(forKey: identifier)
+            settings.appNormalizationSettings.removeValue(forKey: identifier)
             settings.appCompressorSettings.removeValue(forKey: identifier)
             settings.appEQSettings.removeValue(forKey: identifier)
             settings.appDeviceSelectionMode.removeValue(forKey: identifier)
@@ -754,6 +770,7 @@ final class SettingsManager {
         settings.appBoosts.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
+        settings.appNormalizationSettings.removeAll()
         settings.appCompressorSettings.removeAll()
         settings.appEQSettings.removeAll()
         settings.pinnedApps.removeAll()

@@ -544,6 +544,16 @@ final class AudioEngine {
         settingsManager.setEQSettings(settings, for: identifier)
     }
 
+    /// Get loudness normalization settings for an inactive app by persistence identifier.
+    func getNormalizationSettingsForInactive(identifier: String) -> NormalizationSettings {
+        settingsManager.getNormalizationSettings(for: identifier)
+    }
+
+    /// Set loudness normalization settings for an inactive app by persistence identifier.
+    func setNormalizationSettingsForInactive(_ settings: NormalizationSettings, identifier: String) {
+        settingsManager.setNormalizationSettings(settings, for: identifier)
+    }
+
     /// Get compressor settings for an inactive app by persistence identifier.
     func getCompressorSettingsForInactive(identifier: String) -> CompressorSettings {
         settingsManager.getCompressorSettings(for: identifier)
@@ -679,6 +689,7 @@ final class AudioEngine {
         // 5. Push defaults to all active taps
         for tap in taps.values {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+            tap.updateNormalizationSettings(.bypassed)
             tap.updateCompressorSettings(.bypassed)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
@@ -801,6 +812,18 @@ final class AudioEngine {
     func setDeviceSyncLag(for deviceUID: String, to lagMilliseconds: Float) {
         settingsManager.setDeviceSyncLag(for: deviceUID, to: lagMilliseconds)
         applyDeviceSyncLagToTaps(for: deviceUID)
+    }
+
+    /// Update loudness normalization settings for an app
+    func setNormalizationSettings(_ settings: NormalizationSettings, for app: AudioApp) {
+        guard let tap = taps[app.id] else { return }
+        tap.updateNormalizationSettings(settings)
+        settingsManager.setNormalizationSettings(settings, for: app.persistenceIdentifier)
+    }
+
+    /// Get loudness normalization settings for an app
+    func getNormalizationSettings(for app: AudioApp) -> NormalizationSettings {
+        settingsManager.getNormalizationSettings(for: app.persistenceIdentifier)
     }
 
     /// Update compressor settings for an app
@@ -1101,8 +1124,10 @@ final class AudioEngine {
             taps[app.id] = tap
 
             // Load and apply persisted EQ settings
+            let normalizationSettings = settingsManager.getNormalizationSettings(for: app.persistenceIdentifier)
             let compressorSettings = settingsManager.getCompressorSettings(for: app.persistenceIdentifier)
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
+            tap.updateNormalizationSettings(normalizationSettings)
             tap.updateCompressorSettings(compressorSettings)
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
@@ -1243,8 +1268,10 @@ final class AudioEngine {
             taps[app.id] = tap
 
             // Load and apply persisted EQ settings
+            let normalizationSettings = settingsManager.getNormalizationSettings(for: app.persistenceIdentifier)
             let compressorSettings = settingsManager.getCompressorSettings(for: app.persistenceIdentifier)
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
+            tap.updateNormalizationSettings(normalizationSettings)
             tap.updateCompressorSettings(compressorSettings)
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)

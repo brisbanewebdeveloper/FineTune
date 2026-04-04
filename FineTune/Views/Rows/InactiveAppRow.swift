@@ -26,7 +26,9 @@ struct InactiveAppRow: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let normalizationSettings: NormalizationSettings
     let compressorSettings: CompressorSettings
+    let onNormalizationChange: (NormalizationSettings) -> Void
     let onCompressionChange: (CompressorSettings) -> Void
     let syncLagMilliseconds: Float
     let onSyncLagChange: (Float) -> Void
@@ -62,7 +64,9 @@ struct InactiveAppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        normalizationSettings: NormalizationSettings = .bypassed,
         compressorSettings: CompressorSettings = .bypassed,
+        onNormalizationChange: @escaping (NormalizationSettings) -> Void = { _ in },
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         syncLagMilliseconds: Float = 0,
         onSyncLagChange: @escaping (Float) -> Void = { _ in },
@@ -95,7 +99,9 @@ struct InactiveAppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.normalizationSettings = normalizationSettings
         self.compressorSettings = compressorSettings
+        self.onNormalizationChange = onNormalizationChange
         self.onCompressionChange = onCompressionChange
         self.syncLagMilliseconds = syncLagMilliseconds
         self.onSyncLagChange = onSyncLagChange
@@ -144,12 +150,14 @@ struct InactiveAppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
+                    normalizationSettings: normalizationSettings,
                     compressorSettings: compressorSettings,
                     syncLagMilliseconds: syncLagMilliseconds,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onBoostChange: onBoostChange,
+                    onNormalizationChange: onNormalizationChange,
                     onCompressionChange: onCompressionChange,
                     onSyncLagChange: onSyncLagChange,
                     onDeviceSelected: onDeviceSelected,

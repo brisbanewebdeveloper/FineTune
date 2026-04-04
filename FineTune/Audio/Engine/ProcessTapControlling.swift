@@ -19,6 +19,7 @@ protocol ProcessTapControlling: AnyObject {
     func activate() throws
     func invalidate()
     func invalidateAsync() async
+    func updateNormalizationSettings(_ settings: NormalizationSettings)
     func updateCompressorSettings(_ settings: CompressorSettings)
     func setBandMeteringEnabled(_ enabled: Bool)
     func updateEQSettings(_ settings: EQSettings)
@@ -51,6 +52,10 @@ extension ProcessTapControlling {
 
     func invalidateAsync() async {
         invalidate()
+    }
+
+    func updateNormalizationSettings(_ settings: NormalizationSettings) {
+        // Default no-op for mocks that don't override.
     }
 
     func setBandMeteringEnabled(_ enabled: Bool) {

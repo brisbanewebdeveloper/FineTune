@@ -16,12 +16,14 @@ struct AppRowControls: View {
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
     let boost: BoostLevel
+    let normalizationSettings: NormalizationSettings
     let compressorSettings: CompressorSettings
     let syncLagMilliseconds: Float
     let isEQExpanded: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onBoostChange: (BoostLevel) -> Void
+    let onNormalizationChange: (NormalizationSettings) -> Void
     let onCompressionChange: (CompressorSettings) -> Void
     let onSyncLagChange: (Float) -> Void
     let onDeviceSelected: (String) -> Void
@@ -88,8 +90,10 @@ struct AppRowControls: View {
                 .opacity(showMutedIcon ? 0.5 : 1.0)
 
                 CompressionControl(
+                    normalizationSettings: normalizationSettings,
                     settings: compressorSettings,
                     sliderWidth: Self.compressionSliderWidth,
+                    onNormalizationChange: onNormalizationChange,
                     onSettingsChange: onCompressionChange
                 )
 
@@ -169,11 +173,14 @@ struct AppRowControls: View {
 }
 
 private struct CompressionControl: View {
+    let normalizationSettings: NormalizationSettings
     let settings: CompressorSettings
     let sliderWidth: CGFloat
+    let onNormalizationChange: (NormalizationSettings) -> Void
     let onSettingsChange: (CompressorSettings) -> Void
 
     @State private var dragOverrideAmount: Double?
+    @State private var isNormalizationHovered = false
     @State private var isIconHovered = false
 
     private var displayAmount: Double {
@@ -194,8 +201,40 @@ private struct CompressionControl: View {
         settings.isEnabled ? 1.0 : 0.45
     }
 
+    private var normalizationColor: Color {
+        if normalizationSettings.isEnabled {
+            return DesignTokens.Colors.accentPrimary
+        } else if isNormalizationHovered {
+            return DesignTokens.Colors.interactiveHover
+        } else {
+            return DesignTokens.Colors.interactiveDefault
+        }
+    }
+
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
+            Button {
+                onNormalizationChange(
+                    NormalizationSettings(isEnabled: !normalizationSettings.isEnabled)
+                )
+            } label: {
+                Image(systemName: "speaker.wave.2")
+                    .font(.system(size: 12, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(normalizationColor)
+                    .frame(
+                        minWidth: DesignTokens.Dimensions.minTouchTarget,
+                        minHeight: DesignTokens.Dimensions.minTouchTarget
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { isNormalizationHovered = $0 }
+            .help(normalizationSettings.isEnabled ? "Disable loudness normalization" : "Enable loudness normalization")
+            .accessibilityLabel(normalizationSettings.isEnabled ? "Disable loudness normalization" : "Enable loudness normalization")
+            .animation(DesignTokens.Animation.hover, value: isNormalizationHovered)
+            .animation(.snappy(duration: 0.2), value: normalizationSettings.isEnabled)
+
             Button {
                 onSettingsChange(
                     CompressorSettings(

@@ -858,7 +858,11 @@ struct MenuBarPopupView: View {
                 onSelectFollowDefault: {
                     audioEngine.setDevice(for: app, deviceUID: nil)
                 },
+                normalizationSettings: audioEngine.getNormalizationSettings(for: app),
                 compressorSettings: audioEngine.getCompressorSettings(for: app),
+                onNormalizationChange: { settings in
+                    audioEngine.setNormalizationSettings(settings, for: app)
+                },
                 onCompressionChange: { settings in
                     audioEngine.setCompressorSettings(settings, for: app)
                 },
@@ -936,7 +940,11 @@ struct MenuBarPopupView: View {
             onSelectFollowDefault: {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
             },
+            normalizationSettings: audioEngine.getNormalizationSettingsForInactive(identifier: identifier),
             compressorSettings: audioEngine.getCompressorSettingsForInactive(identifier: identifier),
+            onNormalizationChange: { settings in
+                audioEngine.setNormalizationSettingsForInactive(settings, identifier: identifier)
+            },
             onCompressionChange: { settings in
                 audioEngine.setCompressorSettingsForInactive(settings, identifier: identifier)
             },

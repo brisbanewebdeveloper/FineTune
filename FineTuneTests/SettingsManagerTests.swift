@@ -21,6 +21,7 @@ struct SettingsJSONTests {
         #expect(decoded.appVolumes == original.appVolumes)
         #expect(decoded.appSyncLagMs == original.appSyncLagMs)
         #expect(decoded.appMutes == original.appMutes)
+        #expect(decoded.appNormalizationSettings == original.appNormalizationSettings)
         #expect(decoded.deviceSyncLagMs == original.deviceSyncLagMs)
         #expect(decoded.systemSoundsFollowsDefault == original.systemSoundsFollowsDefault)
     }
@@ -33,6 +34,7 @@ struct SettingsJSONTests {
         original.appMutes = ["com.test.app": true]
         original.appBoosts = ["com.test.app": 2.0]
         original.appDeviceRouting = ["com.test.app": "device-uid-123"]
+        original.appNormalizationSettings = ["com.test.app": NormalizationSettings(isEnabled: true)]
         original.appSettings.bandMeterAggregationMode = .peak
         original.pinnedApps = Set(["com.test.app"])
         original.outputDevicePriority = ["uid-a", "uid-b", "uid-c"]
@@ -49,6 +51,7 @@ struct SettingsJSONTests {
         #expect(decoded.appMutes == original.appMutes)
         #expect(decoded.appBoosts == original.appBoosts)
         #expect(decoded.appDeviceRouting == original.appDeviceRouting)
+        #expect(decoded.appNormalizationSettings == original.appNormalizationSettings)
         #expect(decoded.appSettings.bandMeterAggregationMode == .peak)
         #expect(decoded.pinnedApps == original.pinnedApps)
         #expect(decoded.outputDevicePriority == original.outputDevicePriority)
@@ -67,6 +70,7 @@ struct SettingsJSONTests {
         #expect(decoded.appVolumes.isEmpty)
         #expect(decoded.appSyncLagMs.isEmpty)
         #expect(decoded.appMutes.isEmpty)
+        #expect(decoded.appNormalizationSettings.isEmpty)
         #expect(decoded.deviceSyncLagMs.isEmpty)
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
         #expect(decoded.systemSoundsFollowsDefault == true)
@@ -267,6 +271,16 @@ struct AppSettingsDefaultTests {
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
+    }
+
+    @Test("Normalization settings default to bypassed when missing from saved settings")
+    func missingNormalizationSettingsDefaultToBypassed() throws {
+        let json = """
+        {"appVolumes": {"com.test.app": 0.8}}
+        """
+        let data = Data(json.utf8)
+        let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
+        #expect(decoded.appNormalizationSettings.isEmpty)
     }
 }
 

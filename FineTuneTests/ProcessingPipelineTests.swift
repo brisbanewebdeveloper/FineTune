@@ -101,6 +101,7 @@ private func processWithDefaults(
     preferredStereoLeft: Int = 0,
     preferredStereoRight: Int = 1,
     currentVol: inout Float,
+    normalizationProc: LoudnessNormalizationProcessor? = nil,
     compressorProc: MultiBandCompressorProcessor? = nil,
     eqProc: EQProcessor? = nil,
     autoEQProc: AutoEQProcessor? = nil
@@ -114,6 +115,7 @@ private func processWithDefaults(
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,
         currentVol: &currentVol,
+        normalizationProc: normalizationProc,
         compressorProc: compressorProc,
         eqProc: eqProc,
         autoEQProc: autoEQProc
@@ -794,6 +796,124 @@ struct ProcessingChainTests {
             #expect(outData[i] == 0.0,
                     "Trailing sample \(i) should be zeroed, got \(outData[i])")
         }
+    }
+}
+
+// MARK: - Loudness Normalization Tests
+
+@Suite("Loudness normalization — Pre-compression behavior")
+struct LoudnessNormalizationPipelineTests {
+
+    @Test("Quieter material is lifted toward the target level")
+    @MainActor
+    func quieterMaterialIsBoosted() {
+        let frames = 4096
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.06)
+
+        let normalization = LoudnessNormalizationProcessor(sampleRate: 48_000)
+        normalization.updateSettings(NormalizationSettings(isEnabled: true))
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            currentVol: &vol,
+            normalizationProc: normalization
+        )
+
+        let outputData = output.data(at: 0)
+        let lastSample = outputData[(frames - 1) * 2]
+        #expect(lastSample > 0.06,
+                "Quiet material should be boosted before compression. Got \(lastSample)")
+    }
+
+    @Test("Louder material is trimmed toward the target level")
+    @MainActor
+    func louderMaterialIsAttenuated() {
+        let frames = 4096
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.60)
+
+        let normalization = LoudnessNormalizationProcessor(sampleRate: 48_000)
+        normalization.updateSettings(NormalizationSettings(isEnabled: true))
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            currentVol: &vol,
+            normalizationProc: normalization
+        )
+
+        let outputData = output.data(at: 0)
+        let lastSample = outputData[(frames - 1) * 2]
+        #expect(lastSample < 0.60,
+                "Hot material should be attenuated before compression. Got \(lastSample)")
+    }
+
+    @Test("Disabled normalization preserves the existing pipeline")
+    @MainActor
+    func disabledNormalizationIsPassthrough() {
+        let frames = 512
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+
+        let inputData = input.data(at: 0)
+        for index in 0..<(frames * 2) {
+            inputData[index] = Float(index % 7) * 0.05
+        }
+
+        let normalization = LoudnessNormalizationProcessor(sampleRate: 48_000)
+        normalization.updateSettings(.bypassed)
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            currentVol: &vol,
+            normalizationProc: normalization
+        )
+
+        let outputData = output.data(at: 0)
+        for index in 0..<(frames * 2) {
+            #expect(abs(outputData[index] - inputData[index]) < 1e-6,
+                    "Disabled normalization should not alter sample \(index)")
+        }
+    }
+
+    @Test("Normalization preserves stereo balance while shifting overall level")
+    @MainActor
+    func stereoBalanceIsPreserved() {
+        let frames = 4096
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+
+        let inputData = input.data(at: 0)
+        for frame in 0..<frames {
+            inputData[frame * 2] = 0.12
+            inputData[frame * 2 + 1] = 0.06
+        }
+
+        let normalization = LoudnessNormalizationProcessor(sampleRate: 48_000)
+        normalization.updateSettings(NormalizationSettings(isEnabled: true))
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            currentVol: &vol,
+            normalizationProc: normalization
+        )
+
+        let outputData = output.data(at: 0)
+        let lastLeft = outputData[(frames - 1) * 2]
+        let lastRight = outputData[(frames - 1) * 2 + 1]
+        let ratio = lastLeft / max(lastRight, 0.000_001)
+        #expect(abs(ratio - 2.0) < 0.05,
+                "Normalization should keep the stereo level ratio stable. Got \(ratio)")
     }
 }
 
