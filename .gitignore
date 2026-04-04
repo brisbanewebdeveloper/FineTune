@@ -13,6 +13,7 @@ DerivedData/
 tools/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
 
 # Tests (excluded from v1.0)
 FineTuneTests/*
