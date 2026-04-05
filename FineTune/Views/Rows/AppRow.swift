@@ -8,6 +8,8 @@ struct AppRow: View {
     let volume: Float  // Linear gain 0-1 (boost applied separately)
     let audioLevel: Float
     let realtimeBandLevels: RealtimeBandLevels
+    let performanceDiagnostics: AudioPerformanceDiagnostics
+    let showsPerformanceDiagnostics: Bool
     let showsRealtimeBandLevels: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String  // For single mode
@@ -29,6 +31,7 @@ struct AppRow: View {
     let onNormalizationChange: (NormalizationSettings) -> Void
     let onCompressionChange: (CompressorSettings) -> Void
     let syncLagMilliseconds: Float
+    let effectiveSyncLagMilliseconds: Float
     let onSyncLagChange: (Float) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
@@ -50,6 +53,8 @@ struct AppRow: View {
         volume: Float,
         audioLevel: Float = 0,
         realtimeBandLevels: RealtimeBandLevels = .zero,
+        performanceDiagnostics: AudioPerformanceDiagnostics = .zero,
+        showsPerformanceDiagnostics: Bool = true,
         showsRealtimeBandLevels: Bool = true,
         devices: [AudioDevice],
         selectedDeviceUID: String,
@@ -71,6 +76,7 @@ struct AppRow: View {
         onNormalizationChange: @escaping (NormalizationSettings) -> Void = { _ in },
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         syncLagMilliseconds: Float = 0,
+        effectiveSyncLagMilliseconds: Float = 0,
         onSyncLagChange: @escaping (Float) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
@@ -88,6 +94,8 @@ struct AppRow: View {
         self.volume = volume
         self.audioLevel = audioLevel
         self.realtimeBandLevels = realtimeBandLevels
+        self.performanceDiagnostics = performanceDiagnostics
+        self.showsPerformanceDiagnostics = showsPerformanceDiagnostics
         self.showsRealtimeBandLevels = showsRealtimeBandLevels
         self.devices = devices
         self.selectedDeviceUID = selectedDeviceUID
@@ -109,6 +117,7 @@ struct AppRow: View {
         self.onNormalizationChange = onNormalizationChange
         self.onCompressionChange = onCompressionChange
         self.syncLagMilliseconds = syncLagMilliseconds
+        self.effectiveSyncLagMilliseconds = effectiveSyncLagMilliseconds
         self.onSyncLagChange = onSyncLagChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
@@ -190,34 +199,121 @@ struct AppRow: View {
         } expandedContent: {
             // EQ panel - shown when expanded
             // SwiftUI calculates natural height via conditional rendering
-            EQPanelView(
-                settings: $localEQSettings,
-                compressorSettings: compressorSettings,
-                realtimeBandLevels: realtimeBandLevels,
-                showsRealtimeBandLevels: showsRealtimeBandLevels,
-                bandMeterAggregationMode: bandMeterAggregationMode,
-                userPresets: userPresets,
-                onPresetSelected: { preset in
-                    localEQSettings = preset.settings
-                    onEQChange(preset.settings)
-                },
-                onUserPresetSelected: { userPreset in
-                    localEQSettings = userPreset.settings
-                    onUserPresetSelected(userPreset)
-                },
-                onSettingsChanged: { settings in
-                    onEQChange(settings)
-                },
-                onSavePreset: onSavePreset,
-                onDeleteUserPreset: onDeleteUserPreset,
-                onRenameUserPreset: onRenameUserPreset
-            )
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                EQPanelView(
+                    settings: $localEQSettings,
+                    compressorSettings: compressorSettings,
+                    realtimeBandLevels: realtimeBandLevels,
+                    showsRealtimeBandLevels: showsRealtimeBandLevels,
+                    bandMeterAggregationMode: bandMeterAggregationMode,
+                    userPresets: userPresets,
+                    onPresetSelected: { preset in
+                        localEQSettings = preset.settings
+                        onEQChange(preset.settings)
+                    },
+                    onUserPresetSelected: { userPreset in
+                        localEQSettings = userPreset.settings
+                        onUserPresetSelected(userPreset)
+                    },
+                    onSettingsChanged: { settings in
+                        onEQChange(settings)
+                    },
+                    onSavePreset: onSavePreset,
+                    onDeleteUserPreset: onDeleteUserPreset,
+                    onRenameUserPreset: onRenameUserPreset
+                )
+
+                if showsPerformanceDiagnostics {
+                    AudioPerformanceDiagnosticsView(
+                        diagnostics: performanceDiagnostics,
+                        effectiveSyncLagMilliseconds: effectiveSyncLagMilliseconds
+                    )
+                }
+            }
             .padding(.top, DesignTokens.Spacing.sm)
         }
         .onChange(of: eqSettings) { _, newValue in
             // Sync from parent when external EQ settings change
             localEQSettings = newValue
         }
+    }
+}
+
+private struct AudioPerformanceDiagnosticsView: View {
+    let diagnostics: AudioPerformanceDiagnostics
+    let effectiveSyncLagMilliseconds: Float
+
+    private var callbackSummary: String {
+        guard diagnostics.hasCallbackData else {
+            return "Callback timing: waiting for audio"
+        }
+
+        guard diagnostics.hasCallbackBudget else {
+            return "Callback timing: \(Self.format(diagnostics.callbackAverageMilliseconds)) ms avg, \(Self.format(diagnostics.callbackPeakMilliseconds)) ms peak"
+        }
+
+        let overBudgetSuffix = diagnostics.callbackPeakExceedsBudget ? " (peak over budget)" : ""
+        return "Callback timing: \(Self.format(diagnostics.callbackAverageMilliseconds)) ms avg, \(Self.format(diagnostics.callbackPeakMilliseconds)) ms peak vs \(Self.format(diagnostics.callbackBudgetMilliseconds)) ms budget\(overBudgetSuffix)"
+    }
+
+    private var callbackFormatSummary: String {
+        guard diagnostics.hasCallbackFormat else {
+            return "Callback format: waiting for audio"
+        }
+
+        return "Callback format: \(diagnostics.callbackFramesPerBuffer) frames @ \(Self.formatKilohertz(diagnostics.callbackSampleRateHz)) kHz"
+    }
+
+    private var appliedSyncLagSummary: String {
+        "Applied sync lag: \(Self.format(Double(effectiveSyncLagMilliseconds))) ms"
+    }
+
+    private var routeSwitchSummary: String {
+        guard diagnostics.hasRouteSwitchData else {
+            return "Route switch timing: no switch recorded yet"
+        }
+
+        let route = diagnostics.routeSwitch
+        let hasBreakdown = route.tapCreationMilliseconds > 0 || route.warmupMilliseconds > 0 || route.crossfadeMilliseconds > 0 || route.promotionMilliseconds > 0
+
+        guard hasBreakdown else {
+            return "Route switch timing: \(Self.format(route.totalMilliseconds)) ms total"
+        }
+
+        return "Route switch timing: \(Self.format(route.totalMilliseconds)) ms total (prep \(Self.format(route.tapCreationMilliseconds)), warmup \(Self.format(route.warmupMilliseconds)), fade \(Self.format(route.crossfadeMilliseconds)), promote \(Self.format(route.promotionMilliseconds)))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+            Text("Diagnostics")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Text(callbackSummary)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Text(callbackFormatSummary)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Text(appliedSyncLagSummary)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Text(routeSwitchSummary)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func format(_ milliseconds: Double) -> String {
+        String(format: "%.1f", milliseconds)
+    }
+
+    private static func formatKilohertz(_ sampleRateHz: Double) -> String {
+        String(format: "%.1f", sampleRateHz / 1000.0)
     }
 }
 

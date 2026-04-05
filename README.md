@@ -5,6 +5,7 @@
 - **Realtime band metering** — Visualizes live per-band signal levels so you can see how compression and EQ are affecting playback.
 - **Band meter aggregation modes** — Switches the meter summary between average and peak views for different monitoring styles.
 - **Audio sync lag control** — Adds per-output delay adjustment in milliseconds to help align playback across routed devices.
+- **In-app timing diagnostics** — Shows callback timing against the current callback budget, plus callback format, applied sync lag, and route-switch timing inside active app rows, to help diagnose device handoff behavior without mistaking callback work for end-to-end output latency.
 
 ---
 
@@ -64,6 +65,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Device priority** — Choose which device FineTune switches to when a new device connects; auto-fallback on disconnect
 - **Auto-restore** — When a device reconnects, apps automatically return to it with their volume, routing, and EQ intact
+- **Route timing diagnostics** — See the latest app route-switch timing, including Bluetooth warmup-heavy handoffs, from the expanded app view; can be turned off in Settings > Audio
 
 ### 🎛 EQ & Correction
 - **10-band EQ** — 20 presets across 5 categories
@@ -74,6 +76,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Bluetooth device management** — Connect paired devices directly from the menu bar
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Menu bar app** — Lightweight, always accessible
+- **Callback timing diagnostics** — Inspect recent audio callback timing against the current callback budget, plus the active callback format and applied sync lag, from expanded active app rows while playback is running; can be turned off in Settings > Audio
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
 ## Screenshots

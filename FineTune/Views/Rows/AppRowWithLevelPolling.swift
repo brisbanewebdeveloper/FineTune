@@ -14,6 +14,13 @@ struct AppRowBandMeteringState: Equatable {
     }
 }
 
+enum AppRowPerformanceDiagnosticsState {
+    static func displayedDiagnostics(isEnabled: Bool, provider: () -> AudioPerformanceDiagnostics) -> AudioPerformanceDiagnostics {
+        guard isEnabled else { return .zero }
+        return provider()
+    }
+}
+
 /// App row that polls audio levels at regular intervals
 struct AppRowWithLevelPolling: View {
     let app: AudioApp
@@ -29,6 +36,8 @@ struct AppRowWithLevelPolling: View {
     let onBoostChange: (BoostLevel) -> Void
     let getAudioLevel: () -> Float
     let getRealtimeBandLevels: () -> RealtimeBandLevels
+    let getPerformanceDiagnostics: () -> AudioPerformanceDiagnostics
+    let showsPerformanceDiagnostics: Bool
     let setBandMeteringEnabled: (Bool) -> Void
     let isPopupVisible: Bool
     let onVolumeChange: (Float) -> Void
@@ -42,6 +51,7 @@ struct AppRowWithLevelPolling: View {
     let onNormalizationChange: (NormalizationSettings) -> Void
     let onCompressionChange: (CompressorSettings) -> Void
     let syncLagMilliseconds: Float
+    let effectiveSyncLagMilliseconds: Float
     let onSyncLagChange: (Float) -> Void
     let onAppActivate: () -> Void
     let eqSettings: EQSettings
@@ -57,6 +67,7 @@ struct AppRowWithLevelPolling: View {
 
     @State private var displayLevel: Float = 0
     @State private var displayBandLevels: RealtimeBandLevels = .zero
+    @State private var displayPerformanceDiagnostics: AudioPerformanceDiagnostics = .zero
     @State private var bandMeteringState = AppRowBandMeteringState()
     @State private var levelTimer: Timer?
 
@@ -74,6 +85,8 @@ struct AppRowWithLevelPolling: View {
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         getAudioLevel: @escaping () -> Float,
         getRealtimeBandLevels: @escaping () -> RealtimeBandLevels = { .zero },
+        getPerformanceDiagnostics: @escaping () -> AudioPerformanceDiagnostics = { .zero },
+        showsPerformanceDiagnostics: Bool = true,
         setBandMeteringEnabled: @escaping (Bool) -> Void = { _ in },
         isPopupVisible: Bool = true,
         onVolumeChange: @escaping (Float) -> Void,
@@ -87,6 +100,7 @@ struct AppRowWithLevelPolling: View {
         onNormalizationChange: @escaping (NormalizationSettings) -> Void = { _ in },
         onCompressionChange: @escaping (CompressorSettings) -> Void = { _ in },
         syncLagMilliseconds: Float = 0,
+        effectiveSyncLagMilliseconds: Float = 0,
         onSyncLagChange: @escaping (Float) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
@@ -113,6 +127,8 @@ struct AppRowWithLevelPolling: View {
         self.onBoostChange = onBoostChange
         self.getAudioLevel = getAudioLevel
         self.getRealtimeBandLevels = getRealtimeBandLevels
+        self.getPerformanceDiagnostics = getPerformanceDiagnostics
+        self.showsPerformanceDiagnostics = showsPerformanceDiagnostics
         self.setBandMeteringEnabled = setBandMeteringEnabled
         self.isPopupVisible = isPopupVisible
         self.onVolumeChange = onVolumeChange
@@ -126,6 +142,7 @@ struct AppRowWithLevelPolling: View {
         self.onNormalizationChange = onNormalizationChange
         self.onCompressionChange = onCompressionChange
         self.syncLagMilliseconds = syncLagMilliseconds
+        self.effectiveSyncLagMilliseconds = effectiveSyncLagMilliseconds
         self.onSyncLagChange = onSyncLagChange
         self.onAppActivate = onAppActivate
         self.eqSettings = eqSettings
@@ -146,6 +163,8 @@ struct AppRowWithLevelPolling: View {
             volume: volume,
             audioLevel: displayLevel,
             realtimeBandLevels: displayBandLevels,
+            performanceDiagnostics: displayPerformanceDiagnostics,
+            showsPerformanceDiagnostics: showsPerformanceDiagnostics,
             showsRealtimeBandLevels: true,
             devices: devices,
             selectedDeviceUID: selectedDeviceUID,
@@ -167,6 +186,7 @@ struct AppRowWithLevelPolling: View {
             onNormalizationChange: onNormalizationChange,
             onCompressionChange: onCompressionChange,
             syncLagMilliseconds: syncLagMilliseconds,
+            effectiveSyncLagMilliseconds: effectiveSyncLagMilliseconds,
             onSyncLagChange: onSyncLagChange,
             onAppActivate: onAppActivate,
             eqSettings: eqSettings,
@@ -190,6 +210,7 @@ struct AppRowWithLevelPolling: View {
             stopLevelPolling()
             setBandMeteringEnabled(false)
             displayBandLevels = .zero
+            displayPerformanceDiagnostics = .zero
         }
         .onChange(of: isPopupVisible) { _, visible in
             if visible {
@@ -198,11 +219,19 @@ struct AppRowWithLevelPolling: View {
             } else {
                 stopLevelPolling()
                 displayLevel = 0  // Reset meter when hidden
+                displayPerformanceDiagnostics = .zero
                 syncBandMeteringState(refreshImmediately: false)
             }
         }
         .onChange(of: isEQExpanded) { _, _ in
             syncBandMeteringState(refreshImmediately: isPopupVisible)
+        }
+        .onChange(of: showsPerformanceDiagnostics) { _, enabled in
+            if enabled, isPopupVisible {
+                refreshLevels()
+            } else {
+                displayPerformanceDiagnostics = .zero
+            }
         }
     }
 
@@ -228,6 +257,10 @@ struct AppRowWithLevelPolling: View {
     private func refreshLevels() {
         displayLevel = getAudioLevel()
         displayBandLevels = bandMeteringState.displayedLevels(from: getRealtimeBandLevels())
+        displayPerformanceDiagnostics = AppRowPerformanceDiagnosticsState.displayedDiagnostics(
+            isEnabled: showsPerformanceDiagnostics,
+            provider: getPerformanceDiagnostics
+        )
     }
 
     private func syncBandMeteringState(refreshImmediately: Bool = true) {

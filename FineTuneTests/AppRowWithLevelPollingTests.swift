@@ -38,4 +38,42 @@ final class AppRowWithLevelPollingTests: XCTestCase {
         XCTAssertFalse(state.sync(isPopupVisible: true, isEQExpanded: false))
         XCTAssertTrue(state.sync(isPopupVisible: true, isEQExpanded: true))
     }
+
+    func testPerformanceDiagnosticsReturnsZeroWithoutCallingProviderWhenDisabled() {
+        var callCount = 0
+
+        let diagnostics = AppRowPerformanceDiagnosticsState.displayedDiagnostics(isEnabled: false) {
+            callCount += 1
+            return AudioPerformanceDiagnostics(
+                callbackAverageMilliseconds: 1.5,
+                callbackPeakMilliseconds: 2.0,
+                callbackBudgetMilliseconds: 5.8,
+                callbackFramesPerBuffer: 512,
+                callbackSampleRateHz: 48_000,
+                callbackCount: 4,
+                routeSwitch: .zero
+            )
+        }
+
+        XCTAssertEqual(diagnostics, .zero)
+        XCTAssertEqual(callCount, 0)
+    }
+
+    func testPerformanceDiagnosticsReturnsProviderValueWhenEnabled() {
+        let expected = AudioPerformanceDiagnostics(
+            callbackAverageMilliseconds: 1.5,
+            callbackPeakMilliseconds: 2.0,
+            callbackBudgetMilliseconds: 5.8,
+            callbackFramesPerBuffer: 512,
+            callbackSampleRateHz: 48_000,
+            callbackCount: 4,
+            routeSwitch: .zero
+        )
+
+        let diagnostics = AppRowPerformanceDiagnosticsState.displayedDiagnostics(isEnabled: true) {
+            expected
+        }
+
+        XCTAssertEqual(diagnostics, expected)
+    }
 }

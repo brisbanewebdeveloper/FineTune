@@ -36,6 +36,7 @@ struct SettingsJSONTests {
         original.appDeviceRouting = ["com.test.app": "device-uid-123"]
         original.appNormalizationSettings = ["com.test.app": NormalizationSettings(isEnabled: true)]
         original.appSettings.bandMeterAggregationMode = .peak
+        original.appSettings.showPerformanceDiagnostics = false
         original.pinnedApps = Set(["com.test.app"])
         original.outputDevicePriority = ["uid-a", "uid-b", "uid-c"]
         original.ddcVolumes = ["monitor-1": 75]
@@ -53,6 +54,7 @@ struct SettingsJSONTests {
         #expect(decoded.appDeviceRouting == original.appDeviceRouting)
         #expect(decoded.appNormalizationSettings == original.appNormalizationSettings)
         #expect(decoded.appSettings.bandMeterAggregationMode == .peak)
+        #expect(decoded.appSettings.showPerformanceDiagnostics == false)
         #expect(decoded.pinnedApps == original.pinnedApps)
         #expect(decoded.outputDevicePriority == original.outputDevicePriority)
         #expect(decoded.ddcVolumes == original.ddcVolumes)
@@ -73,6 +75,7 @@ struct SettingsJSONTests {
         #expect(decoded.appNormalizationSettings.isEmpty)
         #expect(decoded.deviceSyncLagMs.isEmpty)
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
+        #expect(decoded.appSettings.showPerformanceDiagnostics == true)
         #expect(decoded.systemSoundsFollowsDefault == true)
         #expect(decoded.autoEQPreampEnabled == true)
     }
@@ -135,6 +138,7 @@ struct SettingsJSONTests {
         #expect(decoded.appSettings.defaultNewAppVolume == 1.0,
                 "Negative defaultNewAppVolume should be reset to 1.0")
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
+        #expect(decoded.appSettings.showPerformanceDiagnostics == true)
     }
 
         @Test("Sync lag values clamp to supported range on decode")
@@ -260,6 +264,7 @@ struct AppSettingsDefaultTests {
         #expect(settings.defaultNewAppVolume == 1.0)
         #expect(settings.bandMeterAggregationMode == .average)
         #expect(settings.lockInputDevice == true)
+        #expect(settings.showPerformanceDiagnostics == true)
         #expect(settings.showDeviceDisconnectAlerts == true)
     }
 
@@ -271,6 +276,7 @@ struct AppSettingsDefaultTests {
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
         #expect(decoded.appSettings.bandMeterAggregationMode == .average)
+        #expect(decoded.appSettings.showPerformanceDiagnostics == true)
     }
 
     @Test("Normalization settings default to bypassed when missing from saved settings")

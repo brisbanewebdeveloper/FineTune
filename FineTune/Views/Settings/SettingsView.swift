@@ -90,6 +90,13 @@ struct SettingsView: View {
                 isOn: $settings.lockInputDevice
             )
 
+            SettingsToggleRow(
+                icon: "gauge.with.dots.needle.33percent",
+                title: "Show Timing Diagnostics",
+                description: "Show callback and route-switch timing in expanded app rows",
+                isOn: $settings.showPerformanceDiagnostics
+            )
+
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,

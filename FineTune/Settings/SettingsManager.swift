@@ -88,6 +88,9 @@ struct AppSettings: Codable, Equatable {
     // Device Volume
     var softwareDeviceVolumeEnabled: Bool = false  // Software volume for unsupported output devices (opt-in)
 
+    // Diagnostics
+    var showPerformanceDiagnostics: Bool = true
+
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
 
@@ -101,6 +104,7 @@ struct AppSettings: Codable, Equatable {
         bandMeterAggregationMode = try c.decodeIfPresent(BandMeterAggregationMode.self, forKey: .bandMeterAggregationMode) ?? .average
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
+        showPerformanceDiagnostics = try c.decodeIfPresent(Bool.self, forKey: .showPerformanceDiagnostics) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
     }
 }

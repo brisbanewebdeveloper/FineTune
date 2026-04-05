@@ -215,6 +215,9 @@ struct MenuBarPopupView: View {
             if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
                 audioEngine.handleSoftwareVolumeSettingChanged()
             }
+            if oldValue.showPerformanceDiagnostics != newValue.showPerformanceDiagnostics {
+                audioEngine.handlePerformanceDiagnosticsSettingChanged()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -836,6 +839,8 @@ struct MenuBarPopupView: View {
                 },
                 getAudioLevel: { audioEngine.getAudioLevel(for: app) },
                 getRealtimeBandLevels: { audioEngine.getRealtimeBandLevels(for: app) },
+                getPerformanceDiagnostics: { audioEngine.getPerformanceDiagnostics(for: app) },
+                showsPerformanceDiagnostics: localAppSettings.showPerformanceDiagnostics,
                 setBandMeteringEnabled: { enabled in
                     audioEngine.setBandMeteringEnabled(enabled, for: app)
                 },
@@ -867,6 +872,7 @@ struct MenuBarPopupView: View {
                     audioEngine.setCompressorSettings(settings, for: app)
                 },
                 syncLagMilliseconds: audioEngine.getAppSyncLag(for: app),
+                effectiveSyncLagMilliseconds: audioEngine.getEffectiveSyncLag(for: app),
                 onSyncLagChange: { lag in
                     audioEngine.setAppSyncLag(for: app, to: lag)
                 },

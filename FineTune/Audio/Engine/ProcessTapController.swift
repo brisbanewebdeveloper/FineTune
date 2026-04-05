@@ -75,6 +75,15 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
     /// Set once any audio callback has rendered at least one buffer.
     private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
+    /// RT-safe callback timing aggregates with a single writer per role.
+    private nonisolated(unsafe) var _primaryCallbackCount: UInt64 = 0
+    private nonisolated(unsafe) var _primaryCallbackDurationTotalNanos: UInt64 = 0
+    private nonisolated(unsafe) var _primaryCallbackPeakDurationNanos: UInt64 = 0
+    private nonisolated(unsafe) var _primaryCallbackFrameCount: UInt32 = 0
+    private nonisolated(unsafe) var _secondaryCallbackCount: UInt64 = 0
+    private nonisolated(unsafe) var _secondaryCallbackDurationTotalNanos: UInt64 = 0
+    private nonisolated(unsafe) var _secondaryCallbackPeakDurationNanos: UInt64 = 0
+    private nonisolated(unsafe) var _secondaryCallbackFrameCount: UInt32 = 0
 
     /// Callback role identification — RT-safe via atomic UInt32 reads.
     /// Each IO proc closure captures an immutable callbackID at creation.
@@ -124,6 +133,9 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var secondaryCompressedBandAnalyzer: MultiBandLevelAnalyzer?
     private nonisolated(unsafe) var secondaryEqualizedBandAnalyzer: MultiBandLevelAnalyzer?
     private var isBandMeteringEnabled = false
+    private nonisolated(unsafe) var performanceDiagnosticsEnabled = true
+    private nonisolated(unsafe) var primarySampleRate: Double = 48_000
+    private nonisolated(unsafe) var secondarySampleRate: Double = 48_000
 
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
@@ -143,8 +155,9 @@ final class ProcessTapController: ProcessTapControlling {
     /// Guard against re-entrant crossfade (ORCH-001)
     private var isSwitching = false
     /// Cancellable crossfade task — cancelled when a new switch starts
-    private var crossfadeTask: Task<Void, Error>?
+    private var crossfadeTask: Task<RouteSwitchDiagnostics, Error>?
     private var didLogEQBypassForMultichannel = false
+    private var lastRouteSwitchDiagnostics = RouteSwitchDiagnostics.zero
 
     // MARK: - Public Properties
 
@@ -166,12 +179,93 @@ final class ProcessTapController: ProcessTapControlling {
         return primaryLevels.maxMerged(with: secondaryLevels)
     }
 
+    var performanceDiagnostics: AudioPerformanceDiagnostics {
+        guard performanceDiagnosticsEnabled else { return .zero }
+
+        let totalCount = _primaryCallbackCount + _secondaryCallbackCount
+        let totalDurationNanos = _primaryCallbackDurationTotalNanos + _secondaryCallbackDurationTotalNanos
+        let peakDurationNanos = max(_primaryCallbackPeakDurationNanos, _secondaryCallbackPeakDurationNanos)
+        let callbackFormat = selectedCallbackFormat()
+        let callbackAverageMilliseconds = totalCount > 0
+            ? Self.nanosToMilliseconds(totalDurationNanos) / Double(totalCount)
+            : 0
+
+        return AudioPerformanceDiagnostics(
+            callbackAverageMilliseconds: callbackAverageMilliseconds,
+            callbackPeakMilliseconds: Self.nanosToMilliseconds(peakDurationNanos),
+            callbackBudgetMilliseconds: callbackFormat.budgetMilliseconds,
+            callbackFramesPerBuffer: callbackFormat.frames,
+            callbackSampleRateHz: callbackFormat.sampleRate,
+            callbackCount: totalCount,
+            routeSwitch: lastRouteSwitchDiagnostics
+        )
+    }
+
     private static let hostTimeNanosScale: Double = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
         guard info.denom != 0 else { return 1.0 }
         return Double(info.numer) / Double(info.denom)
     }()
+
+    private static func nanosToMilliseconds(_ nanos: UInt64) -> Double {
+        Double(nanos) / 1_000_000.0
+    }
+
+    private static func callbackBudgetMilliseconds(frames: UInt32, sampleRate: Double) -> Double {
+        guard frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }
+        return (Double(frames) / sampleRate) * 1000.0
+    }
+
+    private func selectedCallbackFormat() -> (frames: UInt32, sampleRate: Double, budgetMilliseconds: Double) {
+        let primaryBudget = Self.callbackBudgetMilliseconds(frames: _primaryCallbackFrameCount, sampleRate: primarySampleRate)
+        let secondaryBudget = Self.callbackBudgetMilliseconds(frames: _secondaryCallbackFrameCount, sampleRate: secondarySampleRate)
+
+        if secondaryBudget > primaryBudget {
+            return (
+                frames: _secondaryCallbackFrameCount,
+                sampleRate: secondarySampleRate,
+                budgetMilliseconds: secondaryBudget
+            )
+        }
+
+        return (
+            frames: _primaryCallbackFrameCount,
+            sampleRate: primarySampleRate,
+            budgetMilliseconds: primaryBudget
+        )
+    }
+
+    private static func hostDeltaMilliseconds(start: CFAbsoluteTime, end: CFAbsoluteTime) -> Double {
+        max(0, (end - start) * 1000.0)
+    }
+
+    private static func hostDurationNanos(start: UInt64, end: UInt64) -> UInt64 {
+        guard end >= start else { return 0 }
+        let duration = Double(end - start) * hostTimeNanosScale
+        guard duration.isFinite, duration > 0 else { return 0 }
+        return UInt64(duration.rounded())
+    }
+
+    private func resetPrimaryCallbackDiagnostics() {
+        _primaryCallbackCount = 0
+        _primaryCallbackDurationTotalNanos = 0
+        _primaryCallbackPeakDurationNanos = 0
+        _primaryCallbackFrameCount = 0
+    }
+
+    private func resetSecondaryCallbackDiagnostics() {
+        _secondaryCallbackCount = 0
+        _secondaryCallbackDurationTotalNanos = 0
+        _secondaryCallbackPeakDurationNanos = 0
+        _secondaryCallbackFrameCount = 0
+    }
+
+    private func resetPerformanceDiagnostics() {
+        resetPrimaryCallbackDiagnostics()
+        resetSecondaryCallbackDiagnostics()
+        lastRouteSwitchDiagnostics = .zero
+    }
 
     /// Returns true when the audio callback has run within the requested interval.
     func hasRecentAudioCallback(within seconds: Double) -> Bool {
@@ -266,6 +360,13 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryOriginalBandAnalyzer?.setEnabled(enabled)
         secondaryCompressedBandAnalyzer?.setEnabled(enabled)
         secondaryEqualizedBandAnalyzer?.setEnabled(enabled)
+    }
+
+    func updatePerformanceDiagnosticsEnabled(_ enabled: Bool) {
+        performanceDiagnosticsEnabled = enabled
+        if !enabled {
+            resetPerformanceDiagnostics()
+        }
     }
 
     func updateEQSettings(_ settings: EQSettings) {
@@ -429,6 +530,7 @@ final class ProcessTapController: ProcessTapControlling {
         _lastRenderHostTime = 0
         _activationHostTime = mach_absolute_time()
         _hasRenderedAudio = false
+        resetPerformanceDiagnostics()
 
         // Create process tap. Prefer stream-specific tap for multichannel devices to avoid
         // stereo matrix attenuation on interfaces with many output channels.
@@ -478,6 +580,7 @@ final class ProcessTapController: ProcessTapControlling {
             sampleRate = 48000
             logger.warning("Failed to read sample rate, using default: \(sampleRate) Hz")
         }
+        primarySampleRate = sampleRate
         let rampTimeSeconds: Float = 0.030  // 30ms - fast enough to feel responsive, slow enough to avoid clicks
         rampCoefficient = 1 - exp(-1 / (Float(sampleRate) * rampTimeSeconds))
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
@@ -558,20 +661,21 @@ final class ProcessTapController: ProcessTapControlling {
         // All devices in the aggregate will be included
         let primaryDeviceUID = newDeviceUIDs[0]
 
+        let routeSwitchDiagnostics: RouteSwitchDiagnostics
         if sourceDeviceDead {
             // Source device is disconnected — no audio to crossfade from.
             // Go straight to destructive switch with shortened settle time.
             guard primaryResources.tapDescription != nil else {
                 throw CrossfadeError.noTapDescription
             }
-            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true)
+            routeSwitchDiagnostics = try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true)
         } else {
             crossfadeTask?.cancel()
             crossfadeTask = Task {
                 try await performCrossfadeSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
             }
             do {
-                try await crossfadeTask!.value
+                routeSwitchDiagnostics = try await crossfadeTask!.value
             } catch is CancellationError {
                 logger.info("[UPDATE] Crossfade cancelled by invalidate()")
                 return
@@ -580,7 +684,7 @@ final class ProcessTapController: ProcessTapControlling {
                 guard primaryResources.tapDescription != nil else {
                     throw CrossfadeError.noTapDescription
                 }
-                try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
+                routeSwitchDiagnostics = try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
             }
             crossfadeTask = nil
         }
@@ -589,6 +693,9 @@ final class ProcessTapController: ProcessTapControlling {
         currentDeviceUIDs = newDeviceUIDs
 
         let endTime = CFAbsoluteTimeGetCurrent()
+        lastRouteSwitchDiagnostics = performanceDiagnosticsEnabled
+            ? routeSwitchDiagnostics.withTotalMilliseconds(Self.hostDeltaMilliseconds(start: startTime, end: endTime))
+            : .zero
         logger.info("[UPDATE] === END === Total time: \((endTime - startTime) * 1000)ms")
     }
 
@@ -605,11 +712,14 @@ final class ProcessTapController: ProcessTapControlling {
         logger.info("[REFRESH] Tap source changing for \(self.app.name): \(oldPreferred ?? "mixdown") → \(preferredDeviceUID ?? "mixdown")")
 
         crossfadeTask?.cancel()
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let routeSwitchDiagnostics: RouteSwitchDiagnostics
+
         crossfadeTask = Task {
             try await performCrossfadeSwitch(to: primaryUID, allDeviceUIDs: allUIDs)
         }
         do {
-            try await crossfadeTask!.value
+            routeSwitchDiagnostics = try await crossfadeTask!.value
         } catch is CancellationError {
             logger.info("[REFRESH] Tap source refresh cancelled")
             return
@@ -618,9 +728,14 @@ final class ProcessTapController: ProcessTapControlling {
             guard primaryResources.tapDescription != nil else {
                 throw CrossfadeError.noTapDescription
             }
-            try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: allUIDs)
+            routeSwitchDiagnostics = try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: allUIDs)
         }
         crossfadeTask = nil
+
+        let endTime = CFAbsoluteTimeGetCurrent()
+        lastRouteSwitchDiagnostics = performanceDiagnosticsEnabled
+            ? routeSwitchDiagnostics.withTotalMilliseconds(Self.hostDeltaMilliseconds(start: startTime, end: endTime))
+            : .zero
 
         logger.info("[REFRESH] Tap source refresh complete for \(self.app.name)")
     }
@@ -673,6 +788,7 @@ final class ProcessTapController: ProcessTapControlling {
         _lastRenderHostTime = 0
         _activationHostTime = 0
         _hasRenderedAudio = false
+        resetPerformanceDiagnostics()
 
         crossfadeTask?.cancel()
         crossfadeTask = nil
@@ -708,7 +824,7 @@ final class ProcessTapController: ProcessTapControlling {
 
     // MARK: - Crossfade Operations
 
-    private func performCrossfadeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws {
+    private func performCrossfadeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws -> RouteSwitchDiagnostics {
         let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
 
         // Re-entrant guard (ORCH-001): if already switching, tear down in-progress secondary
@@ -736,7 +852,9 @@ final class ProcessTapController: ProcessTapControlling {
         crossfadeState.beginWarmup()
 
         logger.info("[CROSSFADE] Step 3: Creating secondary tap for \(deviceUIDs.count) device(s)")
+        let tapCreationStart = CFAbsoluteTimeGetCurrent()
         try createSecondaryTap(for: deviceUIDs)
+        let tapCreationMilliseconds = Self.hostDeltaMilliseconds(start: tapCreationStart, end: CFAbsoluteTimeGetCurrent())
 
         // LIFE-004/005: Ensure secondary tap is cleaned up if crossfade fails or is cancelled
         var crossfadeCompleted = false
@@ -754,7 +872,9 @@ final class ProcessTapController: ProcessTapControlling {
 
         let warmupMs = isBluetoothDestination ? 300 : 50
         logger.info("[CROSSFADE] Step 4: Waiting for secondary tap warmup (\(warmupMs)ms)...")
+        let warmupStart = CFAbsoluteTimeGetCurrent()
         try await Task.sleep(for: .milliseconds(UInt64(warmupMs)))
+        let warmupMilliseconds = Self.hostDeltaMilliseconds(start: warmupStart, end: CFAbsoluteTimeGetCurrent())
 
         // Transition to crossfading phase now that warmup sleep has elapsed
         crossfadeState.beginCrossfading()
@@ -763,11 +883,13 @@ final class ProcessTapController: ProcessTapControlling {
         let timeoutMs = Int(CrossfadeConfig.duration * 1000) + (isBluetoothDestination ? 400 : 100)
         let pollIntervalMs: UInt64 = 5
         var elapsedMs: Int = 0
+        let crossfadeStart = CFAbsoluteTimeGetCurrent()
 
         while (!crossfadeState.isCrossfadeComplete || !crossfadeState.isWarmupComplete) && elapsedMs < timeoutMs {
             try await Task.sleep(for: .milliseconds(pollIntervalMs))
             elapsedMs += Int(pollIntervalMs)
         }
+        let crossfadeMilliseconds = Self.hostDeltaMilliseconds(start: crossfadeStart, end: CFAbsoluteTimeGetCurrent())
 
         // Handle timeout - force completion if progress incomplete
         let progressAtTimeout = crossfadeState.progress
@@ -783,6 +905,7 @@ final class ProcessTapController: ProcessTapControlling {
             throw CrossfadeError.secondaryTapFailed
         }
 
+        let promotionStart = CFAbsoluteTimeGetCurrent()
         try await Task.sleep(for: .milliseconds(10))
 
         logger.info("[CROSSFADE] Crossfade complete, promoting secondary")
@@ -794,10 +917,18 @@ final class ProcessTapController: ProcessTapControlling {
         crossfadeCompleted = true
 
         logger.info("[CROSSFADE] Complete")
+        return RouteSwitchDiagnostics(
+            totalMilliseconds: 0,
+            tapCreationMilliseconds: tapCreationMilliseconds,
+            warmupMilliseconds: warmupMilliseconds,
+            crossfadeMilliseconds: crossfadeMilliseconds,
+            promotionMilliseconds: Self.hostDeltaMilliseconds(start: promotionStart, end: CFAbsoluteTimeGetCurrent())
+        )
     }
 
     private func createSecondaryTap(for outputUIDs: [String]) throws {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
+        resetSecondaryCallbackDiagnostics()
 
         let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
         secondaryResources.tapDescription = tapDesc
@@ -839,6 +970,7 @@ final class ProcessTapController: ProcessTapControlling {
         } else {
             sampleRate = 48000
         }
+        secondarySampleRate = sampleRate
         crossfadeState.totalSamples = CrossfadeConfig.totalSamples(at: sampleRate)
 
         let rampTimeSeconds: Float = 0.030
@@ -940,6 +1072,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             let rampTimeSeconds: Float = 0.030
+            primarySampleRate = deviceSampleRate
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
         }
 
@@ -989,6 +1122,9 @@ final class ProcessTapController: ProcessTapControlling {
 
         _primaryCurrentVolume = _secondaryCurrentVolume
         _secondaryCurrentVolume = 0
+        _primaryCallbackFrameCount = _secondaryCallbackFrameCount
+        primarySampleRate = secondarySampleRate
+        _secondaryCallbackFrameCount = 0
         _primaryPreferredStereoLeftChannel = _secondaryPreferredStereoLeftChannel
         _primaryPreferredStereoRightChannel = _secondaryPreferredStereoRightChannel
 
@@ -1006,9 +1142,10 @@ final class ProcessTapController: ProcessTapControlling {
     /// Performs a destructive (non-crossfade) device switch with silence padding.
     /// - Parameter sourceAlreadySilent: If true (e.g. source device disconnected), skips the
     ///   pre-switch silence wait and uses a shorter post-switch settle time.
-    private func performDestructiveDeviceSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil, sourceAlreadySilent: Bool = false) async throws {
+    private func performDestructiveDeviceSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil, sourceAlreadySilent: Bool = false) async throws -> RouteSwitchDiagnostics {
         let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
         let originalVolume = _volume
+        let switchStart = CFAbsoluteTimeGetCurrent()
 
         _forceSilence = true
         OSMemoryBarrier()
@@ -1038,6 +1175,7 @@ final class ProcessTapController: ProcessTapControlling {
         }
 
         logger.info("[SWITCH-DESTROY] Complete")
+        return RouteSwitchDiagnostics.zero.withTotalMilliseconds(Self.hostDeltaMilliseconds(start: switchStart, end: CFAbsoluteTimeGetCurrent()))
     }
 
     private func performDeviceSwitch(to outputUIDs: [String]) throws {
@@ -1112,6 +1250,7 @@ final class ProcessTapController: ProcessTapControlling {
         currentDeviceUIDs = outputUIDs
 
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
+            primarySampleRate = deviceSampleRate
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
             normalizationProcessor?.updateSampleRate(deviceSampleRate)
             compressorProcessor?.updateSampleRate(deviceSampleRate)
@@ -1560,7 +1699,8 @@ final class ProcessTapController: ProcessTapControlling {
         to outputBufferList: UnsafeMutablePointer<AudioBufferList>,
         callbackID: UInt32
     ) {
-        _lastRenderHostTime = mach_absolute_time()
+        let callbackStartHostTime = mach_absolute_time()
+        _lastRenderHostTime = callbackStartHostTime
         _hasRenderedAudio = true
 
         let isPrimary = (callbackID == _primaryCallbackID)
@@ -1575,6 +1715,25 @@ final class ProcessTapController: ProcessTapControlling {
                 if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
             }
             return
+        }
+
+        defer {
+            if performanceDiagnosticsEnabled {
+                let callbackDurationNanos = Self.hostDurationNanos(start: callbackStartHostTime, end: mach_absolute_time())
+                if isPrimary {
+                    _primaryCallbackCount += 1
+                    _primaryCallbackDurationTotalNanos += callbackDurationNanos
+                    if callbackDurationNanos > _primaryCallbackPeakDurationNanos {
+                        _primaryCallbackPeakDurationNanos = callbackDurationNanos
+                    }
+                } else {
+                    _secondaryCallbackCount += 1
+                    _secondaryCallbackDurationTotalNanos += callbackDurationNanos
+                    if callbackDurationNanos > _secondaryCallbackPeakDurationNanos {
+                        _secondaryCallbackPeakDurationNanos = callbackDurationNanos
+                    }
+                }
+            }
         }
 
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
@@ -1608,6 +1767,14 @@ final class ProcessTapController: ProcessTapControlling {
             }
         }
         let rawPeak = min(maxPeak, 1.0)
+
+        if totalSamplesThisBuffer > 0 {
+            if isPrimary {
+                _primaryCallbackFrameCount = UInt32(clamping: totalSamplesThisBuffer)
+            } else {
+                _secondaryCallbackFrameCount = UInt32(clamping: totalSamplesThisBuffer)
+            }
+        }
 
         if isPrimary {
             _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)

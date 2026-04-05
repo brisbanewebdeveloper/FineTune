@@ -13,6 +13,7 @@ protocol ProcessTapControlling: AnyObject {
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
     var realtimeBandLevels: RealtimeBandLevels { get }
+    var performanceDiagnostics: AudioPerformanceDiagnostics { get }
     var currentDeviceUID: String? { get }
     var currentDeviceUIDs: [String] { get }
 
@@ -22,6 +23,7 @@ protocol ProcessTapControlling: AnyObject {
     func updateNormalizationSettings(_ settings: NormalizationSettings)
     func updateCompressorSettings(_ settings: CompressorSettings)
     func setBandMeteringEnabled(_ enabled: Bool)
+    func updatePerformanceDiagnosticsEnabled(_ enabled: Bool)
     func updateEQSettings(_ settings: EQSettings)
     func updateSyncLag(_ lagMilliseconds: Float)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
@@ -37,6 +39,10 @@ protocol ProcessTapControlling: AnyObject {
 
 extension ProcessTapControlling {
     var realtimeBandLevels: RealtimeBandLevels {
+        .zero
+    }
+
+    var performanceDiagnostics: AudioPerformanceDiagnostics {
         .zero
     }
 
@@ -59,6 +65,10 @@ extension ProcessTapControlling {
     }
 
     func setBandMeteringEnabled(_ enabled: Bool) {
+        // Default no-op for mocks that don't override.
+    }
+
+    func updatePerformanceDiagnosticsEnabled(_ enabled: Bool) {
         // Default no-op for mocks that don't override.
     }
 

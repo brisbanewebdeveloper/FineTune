@@ -623,6 +623,11 @@ final class AudioEngine {
         taps[app.id]?.realtimeBandLevels ?? .zero
     }
 
+    /// Get per-app audio performance diagnostics for the active tap.
+    func getPerformanceDiagnostics(for app: AudioApp) -> AudioPerformanceDiagnostics {
+        taps[app.id]?.performanceDiagnostics ?? .zero
+    }
+
     /// Enable lightweight per-band metering while the expanded EQ panel is visible.
     func setBandMeteringEnabled(_ enabled: Bool, for app: AudioApp) {
         taps[app.id]?.setBandMeteringEnabled(enabled)
@@ -748,6 +753,7 @@ final class AudioEngine {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
+        tap.updatePerformanceDiagnosticsEnabled(settingsManager.appSettings.showPerformanceDiagnostics)
         tap.updateSyncLag(effectiveSyncLag(for: tap.app.persistenceIdentifier, deviceUIDs: resolvedUIDs))
 
         if let primaryUID = resolvedUIDs.first,
@@ -785,6 +791,12 @@ final class AudioEngine {
         refreshAllTapOutputStates()
     }
 
+    /// Called when the timing diagnostics setting is toggled.
+    /// Reapplies tap state so active controllers enable or disable diagnostics immediately.
+    func handlePerformanceDiagnosticsSettingChanged() {
+        refreshAllTapOutputStates()
+    }
+
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
         taps[app.id]?.isMuted = muted
@@ -796,6 +808,14 @@ final class AudioEngine {
 
     func getAppSyncLag(for app: AudioApp) -> Float {
         settingsManager.getAppSyncLag(for: app.persistenceIdentifier)
+    }
+
+    func getEffectiveSyncLag(for app: AudioApp) -> Float {
+        if let tap = taps[app.id] {
+            return effectiveSyncLag(for: app.persistenceIdentifier, deviceUIDs: tap.currentDeviceUIDs)
+        }
+
+        return getAppSyncLag(for: app)
     }
 
     func setAppSyncLag(for app: AudioApp, to lagMilliseconds: Float) {
