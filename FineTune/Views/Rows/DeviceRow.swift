@@ -1,8 +1,22 @@
 // FineTune/Views/Rows/DeviceRow.swift
 import SwiftUI
 
-/// A row displaying a device with volume controls
-/// Used in the Output Devices section
+/// A row displaying a device with volume controls.
+/// Used in the Output Devices section.
+///
+/// Volume mapping depends on the device's `volumeBackend`:
+/// - **Hardware**: Identity mapping (slider == HAL scalar). CoreAudio's VirtualMainVolume
+///   scalar is already audio-tapered by the driver — IOAudioLevelControl applies a dB curve
+///   by default (see `setLinearScale()` in IOAudioLevelControl.h). Empirically confirmed:
+///   scalar 0.50 → −50 dB, scalar 0.10 → −90 dB (100 dB range, linear-in-dB).
+/// - **DDC**: Identity mapping (slider == DDC 0–100 / 100). DDC writes VCP 0x62 (Audio
+///   Speaker Volume) as an integer 0–100 directly to the monitor via I2C, bypassing the HAL
+///   entirely. The monitor's firmware handles perceptual mapping internally. Identity matches
+///   the OSD values users see on the physical display. MonitorControl uses the same approach.
+/// - **Software**: VolumeMapping x² curve. Software gain is a linear PCM amplitude multiplier
+///   that needs perceptual scaling (dr-lex.be, Discord perceptual).
+///
+/// See: IOAudioLevelControl.h, MCCS VCP 0x62, empirical ScalarToDecibels measurement.
 struct DeviceRow: View {
     let device: AudioDevice
     let isDefault: Bool
@@ -10,6 +24,8 @@ struct DeviceRow: View {
     let isMuted: Bool
     let hasVolumeControl: Bool
     let syncLagMilliseconds: Float
+    /// The device's volume backend. Determines which slider ↔ value mapping to use.
+    let volumeBackend: VolumeControlTier
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -36,8 +52,15 @@ struct DeviceRow: View {
     /// Breaks the quantization feedback loop on USB DACs with discrete dB steps.
     @State private var isUpdatingSliderFromDevice = false
 
-    /// Show muted icon when system muted OR volume is 0
-    private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
+    /// The displayed percentage value, matching EditablePercentage's formula.
+    /// Used for icon and unmute logic so visual state stays consistent with the label.
+    private var displayedPercentage: Int { Int(round(sliderValue * 100)) }
+
+    /// Show muted icon when system muted OR displayed volume is 0%.
+    /// Uses percentage threshold (not exact sliderValue == 0) because SwiftUI Slider
+    /// and volume clamping can leave sliderValue at tiny non-zero values (e.g. 0.003)
+    /// that display as "0%" but fail exact Double equality.
+    private var showMutedIcon: Bool { isMuted || displayedPercentage == 0 }
 
     /// Default slider position to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
@@ -49,6 +72,7 @@ struct DeviceRow: View {
         isMuted: Bool,
         hasVolumeControl: Bool = true,
         syncLagMilliseconds: Float = 0,
+        volumeBackend: VolumeControlTier = .hardware,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
@@ -72,6 +96,7 @@ struct DeviceRow: View {
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
         self.syncLagMilliseconds = syncLagMilliseconds
+        self.volumeBackend = volumeBackend
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -88,7 +113,7 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
-        self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
+        self._sliderValue = State(initialValue: Self.volumeToSlider(volume, backend: volumeBackend))
     }
 
     var body: some View {
@@ -171,8 +196,8 @@ struct DeviceRow: View {
                 // Mute button
                 MuteButton(isMuted: showMutedIcon) {
                     if showMutedIcon {
-                        // Unmute: restore to default if at 0
-                        if sliderValue == 0 {
+                        // Unmute: restore to default if displayed as 0%
+                        if displayedPercentage == 0 {
                             suppressSliderAutoUnmute = isMuted
                             sliderValue = defaultUnmuteVolume
                         }
@@ -199,7 +224,7 @@ struct DeviceRow: View {
                         isUpdatingSliderFromDevice = false
                         return
                     }
-                    onVolumeChange(VolumeMapping.sliderToGain(newValue))
+                    onVolumeChange(Self.sliderToVolume(newValue, backend: volumeBackend))
                     if suppressSliderAutoUnmute {
                         suppressSliderAutoUnmute = false
                         return
@@ -224,7 +249,7 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            let newSlider = VolumeMapping.gainToSlider(newValue)
+            let newSlider = Self.volumeToSlider(newValue, backend: volumeBackend)
             guard newSlider != sliderValue else { return }
             isUpdatingSliderFromDevice = true
             sliderValue = newSlider
@@ -233,6 +258,43 @@ struct DeviceRow: View {
 }
 
 extension DeviceRow {
+    // MARK: - Volume Mapping
+
+    /// Converts a stored volume value to slider position based on the device's volume backend.
+    static func volumeToSlider(_ volume: Float, backend: VolumeControlTier) -> Double {
+        switch backend {
+        case .hardware:
+            // HAL scalar is already audio-tapered by the driver (IOAudioLevelControl dB curve).
+            // Identity: slider position == scalar value.
+            return Double(volume)
+        case .ddc:
+            // DDC 0–100 is a monitor-facing percentage sent via VCP 0x62 over I2C.
+            // The monitor's firmware applies its own perceptual curve internally.
+            // Identity: slider position == DDC value / 100. Matches OSD values.
+            return Double(volume)
+        case .software:
+            // Linear PCM amplitude multiplier. Needs x² curve for perceptual linearity.
+            return VolumeMapping.gainToSlider(volume)
+        }
+    }
+
+    /// Converts a slider position to a volume value for the device's volume backend.
+    static func sliderToVolume(_ slider: Double, backend: VolumeControlTier) -> Float {
+        switch backend {
+        case .hardware:
+            // Identity: write slider position directly as HAL scalar.
+            return Float(slider)
+        case .ddc:
+            // Identity: DeviceVolumeMonitor converts Float → Int(round(value * 100)) for DDC.
+            return Float(slider)
+        case .software:
+            // Apply x² curve: slider position → linear PCM gain.
+            return VolumeMapping.sliderToGain(slider)
+        }
+    }
+
+    // MARK: - Subtitle
+
     static func autoEQSubtitle(profileName: String?, isEnabled: Bool) -> String? {
         guard let profileName else { return nil }
         return isEnabled ? profileName : "\(profileName) (off)"
