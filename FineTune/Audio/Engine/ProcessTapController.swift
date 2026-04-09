@@ -121,6 +121,11 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var originalBandAnalyzer: MultiBandLevelAnalyzer?
     private nonisolated(unsafe) var compressedBandAnalyzer: MultiBandLevelAnalyzer?
     private nonisolated(unsafe) var equalizedBandAnalyzer: MultiBandLevelAnalyzer?
+    private nonisolated(unsafe) var loudnessCompensator: LoudnessCompensator?
+    private nonisolated(unsafe) var loudnessEqualizerProcessor: LoudnessEqualizer?
+    /// Last effective loudness volume (device × app) passed to updateLoudnessCompensation.
+    /// Used by createSecondaryTap to initialize secondary compensator with the correct volume.
+    private var _lastLoudnessVolume: Float = 1.0
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
@@ -136,6 +141,8 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var performanceDiagnosticsEnabled = true
     private nonisolated(unsafe) var primarySampleRate: Double = 48_000
     private nonisolated(unsafe) var secondarySampleRate: Double = 48_000
+    private nonisolated(unsafe) var secondaryLoudnessCompensator: LoudnessCompensator?
+    private nonisolated(unsafe) var secondaryLoudnessEqualizerProcessor: LoudnessEqualizer?
 
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
@@ -391,6 +398,38 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryAutoEQProcessor?.setPreampEnabled(enabled)
     }
 
+    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
+        _lastLoudnessVolume = volume
+        if enabled {
+            loudnessCompensator?.updateForVolume(volume)
+            secondaryLoudnessCompensator?.updateForVolume(volume)
+        } else {
+            loudnessCompensator?.setEnabled(false)
+            secondaryLoudnessCompensator?.setEnabled(false)
+        }
+    }
+
+    func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
+        // Atomic swap pattern: create new instance, swap pointer, defer-destroy old.
+        // LoudnessEqualizer is immutable after init — no runtime mutation methods.
+        // This eliminates the data race between main-thread settings changes and
+        // RT-thread process() calls.
+        if let sampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let newProcessor = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate))
+            let old = loudnessEqualizerProcessor
+            loudnessEqualizerProcessor = newProcessor
+            if let old {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = old }
+            }
+        }
+        if let secondary = secondaryLoudnessEqualizerProcessor,
+           let sampleRate = try? secondaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let newSecondary = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate))
+            secondaryLoudnessEqualizerProcessor = newSecondary
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = secondary }
+        }
+    }
+
     // MARK: - Multi-Device Aggregate Configuration
 
     /// Builds aggregate device description for synchronized multi-device output.
@@ -417,7 +456,7 @@ final class ProcessTapController: ProcessTapControlling {
             kAudioAggregateDeviceMainSubDeviceKey: clockDeviceUID,
             kAudioAggregateDeviceClockDeviceKey: clockDeviceUID,
             kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: true,  // All sub-devices receive same audio
+            kAudioAggregateDeviceIsStackedKey: true,  // Required for multi-device mirroring — HAL feeds same audio to all sub-devices
             kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [
@@ -482,6 +521,7 @@ final class ProcessTapController: ProcessTapControlling {
                 let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
                 streamTap.muteBehavior = .mutedWhenTapped
+                streamTap.isPrivate = true
 
                 var tapID: AudioObjectID = .unknown
                 let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
@@ -501,6 +541,7 @@ final class ProcessTapController: ProcessTapControlling {
         let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
         mixdownTap.muteBehavior = .mutedWhenTapped
+        mixdownTap.isPrivate = true
 
         var mixdownTapID: AudioObjectID = .unknown
         let mixdownErr = AudioHardwareCreateProcessTap(mixdownTap, &mixdownTapID)
@@ -597,6 +638,8 @@ final class ProcessTapController: ProcessTapControlling {
         compressedBandAnalyzer?.setEnabled(isBandMeteringEnabled)
         equalizedBandAnalyzer = MultiBandLevelAnalyzer(sampleRate: sampleRate)
         equalizedBandAnalyzer?.setEnabled(isBandMeteringEnabled)
+        loudnessEqualizerProcessor = LoudnessEqualizer(settings: LoudnessEqualizerSettings(), sampleRate: Float(sampleRate))
+        loudnessCompensator = LoudnessCompensator(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -808,13 +851,22 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
+        secondarySyncDelayProcessor = nil
         secondaryOriginalBandAnalyzer = nil
         secondaryCompressedBandAnalyzer = nil
         secondaryEqualizedBandAnalyzer = nil
+        secondaryLoudnessCompensator = nil
+        secondaryLoudnessEqualizerProcessor = nil
         normalizationProcessor = nil
+        compressorProcessor = nil
+        eqProcessor = nil
+        autoEQProcessor = nil
+        syncDelayProcessor = nil
         originalBandAnalyzer = nil
         compressedBandAnalyzer = nil
         equalizedBandAnalyzer = nil
+        loudnessCompensator = nil
+        loudnessEqualizerProcessor = nil
         _invalidating = false
     }
 
@@ -1019,6 +1071,14 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryAutoEQProcessor = secAutoEQ
         secondarySyncDelayProcessor = makeSyncDelayProcessor(for: secondaryResources.aggregateDeviceID, sampleRate: sampleRate)
 
+        let secLoudnessEqualizer = LoudnessEqualizer(settings: loudnessEqualizerProcessor?.currentSettings ?? LoudnessEqualizerSettings(), sampleRate: Float(sampleRate))
+        secondaryLoudnessEqualizerProcessor = secLoudnessEqualizer
+
+        let secLoudness = LoudnessCompensator(sampleRate: sampleRate)
+        secLoudness.updateForVolume(_lastLoudnessVolume)
+        if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
+        secondaryLoudnessCompensator = secLoudness
+
         nextCallbackID += 1
         _secondaryCallbackID = nextCallbackID
         let secondaryCallbackID = nextCallbackID
@@ -1064,6 +1124,8 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryOriginalBandAnalyzer = nil
         secondaryCompressedBandAnalyzer = nil
         secondaryEqualizedBandAnalyzer = nil
+        secondaryLoudnessCompensator = nil
+        secondaryLoudnessEqualizerProcessor = nil
     }
 
     private func promoteSecondaryToPrimary() {
@@ -1087,6 +1149,8 @@ final class ProcessTapController: ProcessTapControlling {
         let oldOriginalAnalyzer = originalBandAnalyzer
         let oldCompressedAnalyzer = compressedBandAnalyzer
         let oldEqualizedAnalyzer = equalizedBandAnalyzer
+        let oldLoudness = loudnessCompensator
+        let oldLoudnessEqualizer = loudnessEqualizerProcessor
         normalizationProcessor = secondaryNormalizationProcessor
         compressorProcessor = secondaryCompressorProcessor
         eqProcessor = secondaryEQProcessor
@@ -1095,6 +1159,8 @@ final class ProcessTapController: ProcessTapControlling {
         originalBandAnalyzer = secondaryOriginalBandAnalyzer
         compressedBandAnalyzer = secondaryCompressedBandAnalyzer
         equalizedBandAnalyzer = secondaryEqualizedBandAnalyzer
+        loudnessCompensator = secondaryLoudnessCompensator
+        loudnessEqualizerProcessor = secondaryLoudnessEqualizerProcessor
         secondaryNormalizationProcessor = nil
         secondaryCompressorProcessor = nil
         secondaryEQProcessor = nil
@@ -1103,11 +1169,13 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryOriginalBandAnalyzer = nil
         secondaryCompressedBandAnalyzer = nil
         secondaryEqualizedBandAnalyzer = nil
+        secondaryLoudnessCompensator = nil
+        secondaryLoudnessEqualizerProcessor = nil
 
         // Deferred cleanup: hold old processors alive briefly so any in-flight RT callback
         // that read the pointer before the swap finishes its buffer without accessing freed memory.
         // 0.5s is conservative — audio callbacks run at ~5ms intervals.
-        if oldNormalization != nil || oldCompressor != nil || oldEQ != nil || oldAutoEQ != nil || oldSyncDelay != nil || oldOriginalAnalyzer != nil || oldCompressedAnalyzer != nil || oldEqualizedAnalyzer != nil {
+        if oldNormalization != nil || oldCompressor != nil || oldEQ != nil || oldAutoEQ != nil || oldSyncDelay != nil || oldOriginalAnalyzer != nil || oldCompressedAnalyzer != nil || oldEqualizedAnalyzer != nil || oldLoudness != nil || oldLoudnessEqualizer != nil {
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
             _ = oldNormalization
                 _ = oldCompressor
@@ -1117,6 +1185,8 @@ final class ProcessTapController: ProcessTapControlling {
                 _ = oldOriginalAnalyzer
                 _ = oldCompressedAnalyzer
                 _ = oldEqualizedAnalyzer
+                _ = oldLoudness
+                _ = oldLoudnessEqualizer
             }
         }
 
@@ -1260,6 +1330,17 @@ final class ProcessTapController: ProcessTapControlling {
             originalBandAnalyzer?.updateSampleRate(deviceSampleRate)
             compressedBandAnalyzer?.updateSampleRate(deviceSampleRate)
             equalizedBandAnalyzer?.updateSampleRate(deviceSampleRate)
+            loudnessCompensator?.updateSampleRate(deviceSampleRate)
+
+            // LoudnessEqualizer is immutable — swap to new instance at new sample rate
+            if let oldLE = loudnessEqualizerProcessor {
+                let newLE = LoudnessEqualizer(
+                    settings: oldLE.currentSettings,
+                    sampleRate: Float(deviceSampleRate)
+                )
+                loudnessEqualizerProcessor = newLE
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldLE }
+            }
         }
     }
 
@@ -1281,6 +1362,8 @@ final class ProcessTapController: ProcessTapControlling {
         compressorProc: MultiBandCompressorProcessor?,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
+        loudnessEqualizerProc: LoudnessEqualizer? = nil,
+        loudnessCompensatorProc: LoudnessCompensator? = nil,
         originalBandAnalyzer: MultiBandLevelAnalyzer? = nil,
         compressedBandAnalyzer: MultiBandLevelAnalyzer? = nil,
         equalizedBandAnalyzer: MultiBandLevelAnalyzer? = nil
@@ -1595,6 +1678,16 @@ final class ProcessTapController: ProcessTapControlling {
                 autoEQProc.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
+            // Loudness Equalization (before loudness compensation)
+            if let loudnessEqualizerProc, loudnessEqualizerProc.isEnabled, eqCanProcessStereoInterleaved {
+                loudnessEqualizerProc.process(input: UnsafePointer(outputSamples), output: outputSamples, frameCount: frameCount, channelCount: outputChannels)
+            }
+
+            // Loudness compensation (after all EQ, before limiting)
+            if let loudnessCompensatorProc, loudnessCompensatorProc.isEnabled, eqCanProcessStereoInterleaved {
+                loudnessCompensatorProc.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+            }
+
             let writtenSampleCount = frameCount * outputChannels
             SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
         }
@@ -1802,6 +1895,8 @@ final class ProcessTapController: ProcessTapControlling {
         let eqProc: EQProcessor?
         let autoEQProc: AutoEQProcessor?
         let syncDelayProc: AudioSyncDelayProcessor?
+        let loudnessEqualizerProc: LoudnessEqualizer?
+        let loudnessCompensatorProc: LoudnessCompensator?
         let originalBandMeter: MultiBandLevelAnalyzer?
         let compressedBandMeter: MultiBandLevelAnalyzer?
         let equalizedBandMeter: MultiBandLevelAnalyzer?
@@ -1820,6 +1915,8 @@ final class ProcessTapController: ProcessTapControlling {
             eqProc = eqProcessor
             autoEQProc = autoEQProcessor
             syncDelayProc = syncDelayProcessor
+            loudnessEqualizerProc = loudnessEqualizerProcessor
+            loudnessCompensatorProc = loudnessCompensator
             originalBandMeter = originalBandAnalyzer
             compressedBandMeter = compressedBandAnalyzer
             equalizedBandMeter = equalizedBandAnalyzer
@@ -1836,6 +1933,8 @@ final class ProcessTapController: ProcessTapControlling {
             eqProc = secondaryEQProcessor
             autoEQProc = secondaryAutoEQProcessor
             syncDelayProc = secondarySyncDelayProcessor
+                loudnessEqualizerProc = secondaryLoudnessEqualizerProcessor
+                loudnessCompensatorProc = secondaryLoudnessCompensator
             originalBandMeter = secondaryOriginalBandAnalyzer
             compressedBandMeter = secondaryCompressedBandAnalyzer
             equalizedBandMeter = secondaryEqualizedBandAnalyzer
@@ -1854,6 +1953,8 @@ final class ProcessTapController: ProcessTapControlling {
             compressorProc: compressorProc,
             eqProc: eqProc,
             autoEQProc: autoEQProc,
+                loudnessEqualizerProc: loudnessEqualizerProc,
+                loudnessCompensatorProc: loudnessCompensatorProc,
             originalBandAnalyzer: originalBandMeter,
             compressedBandAnalyzer: compressedBandMeter,
             equalizedBandAnalyzer: equalizedBandMeter

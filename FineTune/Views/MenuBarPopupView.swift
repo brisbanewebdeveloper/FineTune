@@ -114,6 +114,9 @@ struct MenuBarPopupView: View {
     /// Editable copy of device order for drag-and-drop reordering
     @State private var editableDeviceOrder: [AudioDevice] = []
 
+    /// Hover state for support link heart animation
+    @State private var isSupportHovered = false
+
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
 
@@ -217,6 +220,12 @@ struct MenuBarPopupView: View {
             }
             if oldValue.showPerformanceDiagnostics != newValue.showPerformanceDiagnostics {
                 audioEngine.handlePerformanceDiagnosticsSettingChanged()
+            }
+            if oldValue.loudnessCompensationEnabled != newValue.loudnessCompensationEnabled {
+                audioEngine.setLoudnessCompensationEnabled(newValue.loudnessCompensationEnabled)
+            }
+            if oldValue.loudnessEqualizationEnabled != newValue.loudnessEqualizationEnabled {
+                audioEngine.setLoudnessEqualizationEnabled(newValue.loudnessEqualizationEnabled)
             }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
@@ -368,9 +377,26 @@ struct MenuBarPopupView: View {
         Divider()
             .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Quit button
+        // Footer: support link + quit
         HStack {
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Label("Support", systemImage: isSupportHovered ? "heart.fill" : "heart")
+            }
+            .buttonStyle(.plain)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
+            }
+            .accessibilityLabel("Support FineTune")
+            .help("Support FineTune")
+
             Spacer()
+
             Button("Quit FineTune") {
                 NSApplication.shared.terminate(nil)
             }

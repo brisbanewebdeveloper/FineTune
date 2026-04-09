@@ -28,6 +28,8 @@ protocol ProcessTapControlling: AnyObject {
     func updateSyncLag(_ lagMilliseconds: Float)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
+    func updateLoudnessCompensation(volume: Float, enabled: Bool)
+    func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool

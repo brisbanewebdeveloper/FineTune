@@ -13,6 +13,18 @@ struct SettingsView: View {
     let outputDevices: [AudioDevice]
 
     @State private var showResetConfirmation = false
+    @State private var isSupportHovered = false
+    @State private var isStarHovered = false
+    @State private var isLicenseHovered = false
+
+    private var unifiedLoudnessToggleBinding: Binding<Bool> {
+        Binding(
+            get: { settings.loudnessCompensationEnabled && settings.loudnessEqualizationEnabled },
+            set: { isEnabled in
+                settings.setUnifiedLoudnessEnabled(isEnabled)
+            }
+        )
+    }
 
     var body: some View {
         // Scrollable settings content
@@ -112,8 +124,33 @@ struct SettingsView: View {
                     deviceVolumeMonitor.setSystemFollowDefault()
                 }
             )
+
+            // Sound Effects alert volume slider
+            SettingsSliderRow(
+                icon: "bell.and.waves.left.and.right",
+                title: "Alert Volume",
+                description: "Volume for alerts and notifications",
+                value: Binding(
+                    get: { deviceVolumeMonitor.alertVolume },
+                    set: { deviceVolumeMonitor.setAlertVolume($0) }
+                )
+            )
+            .task {
+                // Poll alert volume for live sync with System Settings.
+                // No CoreAudio property listener exists for alert volume —
+                // AppleScript is the only read path, so periodic refresh is required.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    deviceVolumeMonitor.refreshAlertVolume()
+                }
+            }
+
+            SettingsLoudnessCompensationRow(
+                isOn: unifiedLoudnessToggleBinding
+            )
         }
     }
+
 
     // MARK: - Notifications Section
 
@@ -200,13 +237,55 @@ struct SettingsView: View {
         let yearText = startYear == currentYear ? "\(startYear)" : "\(startYear)-\(currentYear)"
 
         return HStack(spacing: DesignTokens.Spacing.xs) {
-            Link(destination: URL(string: "https://github.com/ronitsingh10/FineTune")!) {
-                Text("\(Image(systemName: "star")) Star on GitHub")
+            Button {
+                NSWorkspace.shared.open(URL(string: "https://github.com/ronitsingh10/FineTune")!)
+            } label: {
+                Text("\(Image(systemName: isStarHovered ? "star.fill" : "star")) Star on GitHub")
+                    .foregroundStyle(isStarHovered ? Color(nsColor: .systemYellow) : DesignTokens.Colors.textTertiary)
             }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isStarHovered = hovering
+                }
+            }
+            .accessibilityLabel("Star FineTune on GitHub")
+
+            Text("·")
+
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Text("\(Image(systemName: isSupportHovered ? "heart.fill" : "heart")) Support FineTune")
+                    .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
+            }
+            .accessibilityLabel("Support FineTune")
 
             Text("·")
 
             Text("Copyright © \(yearText) Ronit Singh")
+
+            Text("·")
+
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.license)
+            } label: {
+                Text("GPL-3.0")
+                    .foregroundStyle(isLicenseHovered ? DesignTokens.Colors.textSecondary : DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isLicenseHovered = hovering
+                }
+            }
+            .accessibilityLabel("View GPL-3.0 license")
         }
         .font(DesignTokens.Typography.caption)
         .foregroundStyle(DesignTokens.Colors.textTertiary)

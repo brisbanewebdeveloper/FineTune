@@ -328,6 +328,7 @@ final class AudioEngine {
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
+            let loudnessEnabled = self.settingsManager.appSettings.loudnessCompensationEnabled
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
@@ -335,6 +336,10 @@ final class AudioEngine {
                        self.outputVolumeBackend(for: deviceID) == .software {
                         tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
                     }
+                    tap.updateLoudnessCompensation(
+                        volume: self.effectiveLoudnessVolume(for: tap),
+                        enabled: loudnessEnabled
+                    )
                 }
             }
         }
@@ -698,6 +703,7 @@ final class AudioEngine {
             tap.updateCompressorSettings(.bypassed)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
+            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -713,6 +719,12 @@ final class AudioEngine {
         }
         if let tap = taps[app.id] {
             tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            if settingsManager.appSettings.loudnessCompensationEnabled {
+                tap.updateLoudnessCompensation(
+                    volume: effectiveLoudnessVolume(for: tap),
+                    enabled: true
+                )
+            }
         }
     }
 
@@ -747,6 +759,13 @@ final class AudioEngine {
         }
 
         return appGain * deviceVolumeMonitor.outputProcessingGain(for: device.id)
+    }
+
+    /// Estimated listening level for loudness compensation: device volume × per-app slider.
+    /// Does not include boost (intentional amplification beyond reference).
+    /// The compensator's phon estimation clamps to [0,1] so values > 1 are treated as reference.
+    private func effectiveLoudnessVolume(for tap: any ProcessTapControlling) -> Float {
+        tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
     }
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
@@ -905,6 +924,20 @@ final class AudioEngine {
         settingsManager.autoEQPreampEnabled = enabled
         for tap in taps.values {
             tap.setAutoEQPreampEnabled(enabled)
+        }
+    }
+
+    func setLoudnessCompensationEnabled(_ enabled: Bool) {
+        for tap in taps.values {
+            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: enabled)
+        }
+    }
+
+    func setLoudnessEqualizationEnabled(_ enabled: Bool) {
+        var settings = LoudnessEqualizerSettings()
+        settings.enabled = enabled
+        for tap in taps.values {
+            tap.updateLoudnessEqualization(settings)
         }
     }
 
@@ -1152,6 +1185,13 @@ final class AudioEngine {
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
             applyAutoEQToTap(tap)
+            var loudnessEqSettings = LoudnessEqualizerSettings()
+            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+            tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+            )
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -1296,6 +1336,13 @@ final class AudioEngine {
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
             applyAutoEQToTap(tap)
+            var loudnessEqSettings = LoudnessEqualizerSettings()
+            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+            tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+            )
 
             logger.debug("Created tap for \(app.name)")
         } catch {
