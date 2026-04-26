@@ -76,9 +76,13 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 ### 🖥 Devices & System
 - **Input device control** — Monitor and adjust microphone levels
 - **Alert volume** — Control macOS notification and alert volume from settings
-- **Software device volume** — Volume control for outputs that don't support hardware volume
+- **Smart volume backend** — FineTune auto-picks hardware, DDC, or software volume per device. If the hardware slider on a USB DAC or HDMI output doesn't actually control level, force software volume from the device inspector and FineTune remembers the choice for that device
+- **Device inspector** — Tap the info button on any device row for sample rate (with picker), transport, UID copy, hog-mode banner, and the software-volume override
+- **Hide devices** — Eye toggle in edit mode hides output and input devices you don't want in the list, mirroring the app-hide flow
 - **Bluetooth device management** — Connect paired devices directly from the menu bar
 - **Monitor speaker control** — Adjust volume on external displays via DDC
+- **Media keys & Volume HUD** — Opt-in F10–F12 control for the default output device, with a Tahoe-style or Classic-style on-screen HUD. The write goes through FineTune's volume pipeline, so keys keep working on USB interfaces and HDMI outputs where macOS's own keys are greyed out because the hardware slider is broken.
+- **Dynamic menu bar icon** — Pick from four styles in Settings (Default, Speaker, Waveform, Equalizer). The **Speaker** style tracks volume live (zero / low / mid / high glyphs) and switches to a slashed speaker when muted. All styles briefly flash the new output's SF Symbol on device switch. Changing style applies instantly, no relaunch required.
 - **Menu bar app** — Lightweight, always accessible
 - **Callback timing diagnostics** — Inspect recent audio callback timing against the current callback budget, plus the active callback format and applied sync lag, from expanded active app rows while playback is running; can be turned off in Settings > Audio
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
@@ -91,7 +95,10 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 </p>
 <p align="center">
   <img src="assets/screenshot-autoeq.png" alt="FineTune AutoEQ headphone correction picker with search and favorites" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
+  <img src="assets/screenshot-settings.png" alt="FineTune settings panel with Media Keys and HUD section" width="400">
+</p>
+<p align="center">
+  <img src="assets/screenshot-device-inspector.png" alt="FineTune device inspector showing sample rate, format, UID, and software-volume override, with hidden devices below" width="400">
 </p>
 
 ## Documentation

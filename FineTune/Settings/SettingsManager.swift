@@ -71,6 +71,18 @@ private func normalizedSyncLagMap(_ values: [String: Float]) -> [String: Float] 
     }
 }
 
+// MARK: - HUD Style
+
+/// Style of the on-screen HUD shown when media keys drive FineTune's volume.
+/// `.tahoe` renders a small top-right pill; `.classic` renders a center-bottom panel
+/// with 16 segment tiles matching Apple's pre-Tahoe HUD aesthetic.
+enum HUDStyle: String, Codable, CaseIterable, Identifiable {
+    case tahoe
+    case classic
+
+    var id: String { rawValue }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -98,6 +110,10 @@ struct AppSettings: Codable, Equatable {
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
 
+    // Media Keys & HUD
+    var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
+    var mediaKeyControlEnabled: Bool = true        // Intercept F10/F11/F12 to drive the default output device
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -117,6 +133,8 @@ struct AppSettings: Codable, Equatable {
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
+        hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
+        mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
     }
 }
 
@@ -131,7 +149,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 10
+        var version: Int = 11
         var appVolumes: [String: Float] = [:]
         var appSyncLagMs: [String: Float] = [:]  // bundleID/name identifier → lag in milliseconds
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
@@ -162,9 +180,18 @@ final class SettingsManager {
         var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
         var deviceSyncLagMs: [String: Float] = [:]  // device UID → lag in milliseconds
 
+        // Per-device volume control tier override (overrides auto-detection).
+        // nil/missing → auto-detect (hardware/ddc/software). Populated only by
+        // the user via the device detail sheet's manual override toggle.
+        var deviceVolumeTierOverride: [String: VolumeControlTier] = [:]
+
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
+
+        // Hidden devices (UIDs of devices suppressed from the main view)
+        var hiddenOutputDeviceUIDs: Set<String> = []
+        var hiddenInputDeviceUIDs: Set<String> = []
 
         // Per-device AutoEQ headphone correction
         var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
@@ -215,8 +242,11 @@ final class SettingsManager {
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
             deviceSyncLagMs = normalizedSyncLagMap(try c.decodeIfPresent([String: Float].self, forKey: .deviceSyncLagMs) ?? [:])
+            deviceVolumeTierOverride = try c.decodeIfPresent([String: VolumeControlTier].self, forKey: .deviceVolumeTierOverride) ?? [:]
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
+            hiddenOutputDeviceUIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenOutputDeviceUIDs) ?? []
+            hiddenInputDeviceUIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenInputDeviceUIDs) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
             favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
             autoEQPreampEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoEQPreampEnabled) ?? true
@@ -508,6 +538,25 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Per-Device Volume Tier Override
+
+    /// Returns the user-set override tier for a device, or nil when
+    /// auto-detection should take effect.
+    func getDeviceVolumeTierOverride(for deviceUID: String) -> VolumeControlTier? {
+        settings.deviceVolumeTierOverride[deviceUID]
+    }
+
+    /// Sets or clears the volume tier override for a device. Passing `nil` removes
+    /// the override, returning the device to auto-detection.
+    func setDeviceVolumeTierOverride(for deviceUID: String, to tier: VolumeControlTier?) {
+        if let tier {
+            settings.deviceVolumeTierOverride[deviceUID] = tier
+        } else {
+            settings.deviceVolumeTierOverride.removeValue(forKey: deviceUID)
+        }
+        scheduleSave()
+    }
+
     // MARK: - Device Priority
 
     var devicePriorityOrder: [String] {
@@ -537,6 +586,74 @@ final class SettingsManager {
     func ensureInputDeviceInPriority(_ uid: String) {
         guard !settings.inputDevicePriority.contains(uid) else { return }
         settings.inputDevicePriority.append(uid)
+        scheduleSave()
+    }
+
+    // MARK: - Hidden Devices
+
+    /// Hides an output device from the main view. Has no effect when the device is the current default.
+    func hideOutputDevice(uid: String) {
+        settings.hiddenOutputDeviceUIDs.insert(uid)
+        scheduleSave()
+    }
+
+    /// Reveals a previously hidden output device in the main view.
+    func unhideOutputDevice(uid: String) {
+        settings.hiddenOutputDeviceUIDs.remove(uid)
+        scheduleSave()
+    }
+
+    /// Returns true if the output device is hidden from the main view.
+    func isOutputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenOutputDeviceUIDs.contains(uid)
+    }
+
+    /// All UIDs of hidden output devices.
+    var hiddenOutputDeviceUIDs: Set<String> {
+        settings.hiddenOutputDeviceUIDs
+    }
+
+    /// Flips the hidden state of an output device based on the persisted set.
+    /// Prefer this over read-then-hide/unhide from the view layer, which can
+    /// desync under rapid taps that re-read stale captured state.
+    func toggleOutputDeviceHidden(uid: String) {
+        if settings.hiddenOutputDeviceUIDs.contains(uid) {
+            settings.hiddenOutputDeviceUIDs.remove(uid)
+        } else {
+            settings.hiddenOutputDeviceUIDs.insert(uid)
+        }
+        scheduleSave()
+    }
+
+    /// Hides an input device from the main view. Has no effect when the device is the current default.
+    func hideInputDevice(uid: String) {
+        settings.hiddenInputDeviceUIDs.insert(uid)
+        scheduleSave()
+    }
+
+    /// Reveals a previously hidden input device in the main view.
+    func unhideInputDevice(uid: String) {
+        settings.hiddenInputDeviceUIDs.remove(uid)
+        scheduleSave()
+    }
+
+    /// Returns true if the input device is hidden from the main view.
+    func isInputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenInputDeviceUIDs.contains(uid)
+    }
+
+    /// All UIDs of hidden input devices.
+    var hiddenInputDeviceUIDs: Set<String> {
+        settings.hiddenInputDeviceUIDs
+    }
+
+    /// Flips the hidden state of an input device based on the persisted set.
+    func toggleInputDeviceHidden(uid: String) {
+        if settings.hiddenInputDeviceUIDs.contains(uid) {
+            settings.hiddenInputDeviceUIDs.remove(uid)
+        } else {
+            settings.hiddenInputDeviceUIDs.insert(uid)
+        }
         scheduleSave()
     }
 
@@ -835,8 +952,11 @@ final class SettingsManager {
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
         settings.deviceSyncLagMs.removeAll()
+        settings.deviceVolumeTierOverride.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
+        settings.hiddenOutputDeviceUIDs.removeAll()
+        settings.hiddenInputDeviceUIDs.removeAll()
         settings.autoEQPreampEnabled = true
         settings.deviceAutoEQ.removeAll()
         settings.favoriteAutoEQProfiles.removeAll()

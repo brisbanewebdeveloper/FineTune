@@ -1,4 +1,5 @@
 // FineTune/Views/MenuBarPopupView.swift
+import AudioToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -58,10 +59,27 @@ struct MenuBarPopupView: View {
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
     @ObservedObject var updateManager: UpdateManager
 
-    /// Icon style that was applied at app launch (for restart-required detection)
-    let launchIconStyle: MenuBarIconStyle
-
     let permission: AudioRecordingPermission
+
+    /// Accessibility trust state — passed through to SettingsView for the
+    /// media-keys section. Bindable so live re-renders occur when trust flips.
+    @Bindable var accessibility: AccessibilityPermissionService
+
+    /// Transient status (offline, suppressionDegraded) for the media-keys banner.
+    @Bindable var mediaKeyStatus: MediaKeyStatus
+
+    /// Shared popup visibility flag — mirrored to this service so `MediaKeyMonitor`
+    /// can skip HUD display while the popup is the "HUD".
+    @Bindable var popupVisibility: PopupVisibilityService
+
+    /// Preview HUD button hook in Settings.
+    let hudController: HUDWindowController
+
+    /// Needed so the popup can reconcile the tap state when the user toggles
+    /// `mediaKeyControlEnabled` inside Settings. Trust-flip reconciliation is
+    /// handled globally via `AccessibilityPermissionService.onTrustChanged`
+    /// wired in `FineTuneApp.init`.
+    let mediaKeyMonitor: MediaKeyMonitor
 
     /// Memoized sorted output devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
@@ -114,6 +132,10 @@ struct MenuBarPopupView: View {
     /// Editable copy of device order for drag-and-drop reordering
     @State private var editableDeviceOrder: [AudioDevice] = []
 
+    /// Device whose inline detail panel is expanded in edit mode (nil when
+    /// collapsed). Mirrors the `expandedRowID` pattern used for per-app EQ.
+    @State private var expandedDeviceUID: String?
+
     /// Hover state for support link heart animation
     @State private var isSupportHovered = false
 
@@ -162,7 +184,6 @@ struct MenuBarPopupView: View {
                 SettingsView(
                     settings: $localAppSettings,
                     updateManager: updateManager,
-                    launchIconStyle: launchIconStyle,
                     onResetAll: {
                         audioEngine.handleSettingsReset()
                         localAppSettings = audioEngine.settingsManager.appSettings
@@ -170,7 +191,10 @@ struct MenuBarPopupView: View {
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
-                    outputDevices: sortedDevices
+                    outputDevices: sortedDevices,
+                    accessibility: accessibility,
+                    mediaKeyStatus: mediaKeyStatus,
+                    mediaKeyMonitor: mediaKeyMonitor
                 )
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -194,6 +218,10 @@ struct MenuBarPopupView: View {
             pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
             isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
+            // popupVisibility.isVisible is driven by the filtered NSWindow key
+            // notifications below, not by .onAppear — SwiftUI mounts this view
+            // before the popup is actually shown, and setting isVisible here
+            // would suppress the HUD on the first media key at cold launch.
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
             if isEditingDevicePriority && !wasEditingInputDevices {
@@ -227,6 +255,9 @@ struct MenuBarPopupView: View {
             if oldValue.loudnessEqualizationEnabled != newValue.loudnessEqualizationEnabled {
                 audioEngine.setLoudnessEqualizationEnabled(newValue.loudnessEqualizationEnabled)
             }
+            if oldValue.mediaKeyControlEnabled != newValue.mediaKeyControlEnabled {
+                mediaKeyMonitor.reconcile()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -242,6 +273,13 @@ struct MenuBarPopupView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
             handleWindowDidResignKey(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            // SwiftUI Menu tracking (e.g. sample-rate picker in the device
+            // inspector) makes the popup window resign key without deactivating
+            // the app. Only treat app-level deactivation as a real dismiss so
+            // in-popup pickers don't collapse edit mode.
+            exitEditModeSaving()
         }
         .background {
             WindowReferenceReader { window in
@@ -306,10 +344,18 @@ struct MenuBarPopupView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSettingsOpen)
     }
 
-    /// Handles Escape key: closes settings/EQ first, then dismisses the popup
+    /// Handles Escape key: closes settings/EQ first, then dismisses the popup.
+    /// Escape order: settings → expanded device detail → edit mode → expanded
+    /// app EQ → popup dismiss. Expanded device detail is checked before
+    /// `isEditingDevicePriority` so Escape collapses the row first rather than
+    /// tearing down edit mode entirely.
     private func handleEscape() {
         if isSettingsOpen {
             toggleSettings()
+        } else if expandedDeviceUID != nil {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                expandedDeviceUID = nil
+            }
         } else if isEditingDevicePriority {
             toggleDevicePriorityEdit()
         } else if expandedRowID != nil {
@@ -332,6 +378,7 @@ struct MenuBarPopupView: View {
         guard MenuBarPopupWindowFocus.isPopupOwnedWindow(window, popupWindow: popupWindow) else { return }
 
         isPopupVisible = true
+        popupVisibility.isVisible = true
         if window === popupWindow {
             audioEngine.bluetoothDeviceMonitor.refresh()
         }
@@ -342,8 +389,8 @@ struct MenuBarPopupView: View {
         guard MenuBarPopupWindowFocus.shouldHandlePopupResign(resigningWindow: window, popupWindow: popupWindow) else { return }
 
         isPopupVisible = false
+        popupVisibility.isVisible = false
         collapseExpandedEQIfNeeded()
-        exitEditModeSaving()
     }
 
     private func toggleSettings() {
@@ -546,39 +593,7 @@ struct MenuBarPopupView: View {
                     ? deviceVolumeMonitor.defaultInputDeviceID
                     : deviceVolumeMonitor.defaultDeviceID
                 ForEach(Array(editableDeviceOrder.enumerated()), id: \.element.uid) { index, device in
-                    DeviceEditRow(
-                        device: device,
-                        priorityIndex: index,
-                        isDefault: device.id == defaultDeviceID,
-                        isInputDevice: showingInputDevices,
-                        deviceCount: editableDeviceOrder.count,
-                        onReorder: { newIndex in
-                            guard let fromIndex = editableDeviceOrder.firstIndex(where: { $0.uid == device.uid }) else { return }
-                            guard newIndex != fromIndex, newIndex >= 0, newIndex < editableDeviceOrder.count else { return }
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                editableDeviceOrder.move(
-                                    fromOffsets: IndexSet(integer: fromIndex),
-                                    toOffset: newIndex > fromIndex ? newIndex + 1 : newIndex
-                                )
-                            }
-                        }
-                    )
-                    .draggable(device.uid) {
-                        Text(device.name)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .dropDestination(for: String.self) { droppedUIDs, _ in
-                        guard let droppedUID = droppedUIDs.first,
-                              let fromIndex = editableDeviceOrder.firstIndex(where: { $0.uid == droppedUID }),
-                              let toIndex = editableDeviceOrder.firstIndex(where: { $0.uid == device.uid }),
-                              fromIndex != toIndex else { return false }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            editableDeviceOrder.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
-                        }
-                        return true
-                    }
+                    editableDeviceRow(device: device, index: index, defaultDeviceID: defaultDeviceID)
                 }
 
                 // Paired Bluetooth devices (output tab only)
@@ -644,7 +659,6 @@ struct MenuBarPopupView: View {
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
-                        hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
                         syncLagMilliseconds: audioEngine.getDeviceSyncLag(for: device.uid),
                         volumeBackend: audioEngine.outputVolumeBackend(for: device.id),
                         onSetDefault: {
@@ -690,6 +704,88 @@ struct MenuBarPopupView: View {
                 }
 
             }
+        }
+    }
+
+    /// Builds a single row for the priority-edit list. Extracted from
+    /// `devicesContent` because the inline expression exceeded Swift's
+    /// type-check budget once hide + expand + drop-destination were combined.
+    @ViewBuilder
+    private func editableDeviceRow(
+        device: AudioDevice,
+        index: Int,
+        defaultDeviceID: AudioDeviceID
+    ) -> some View {
+        let isDeviceHidden = showingInputDevices
+            ? audioEngine.settingsManager.isInputDeviceHidden(device.uid)
+            : audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
+
+        DeviceEditRow(
+            device: device,
+            priorityIndex: index,
+            isDefault: device.id == defaultDeviceID,
+            isInputDevice: showingInputDevices,
+            deviceCount: editableDeviceOrder.count,
+            isExpanded: expandedDeviceUID == device.uid,
+            isHidden: isDeviceHidden,
+            onReorder: { newIndex in
+                guard let fromIndex = editableDeviceOrder.firstIndex(where: { $0.uid == device.uid }) else { return }
+                guard newIndex != fromIndex, newIndex >= 0, newIndex < editableDeviceOrder.count else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    editableDeviceOrder.move(
+                        fromOffsets: IndexSet(integer: fromIndex),
+                        toOffset: newIndex > fromIndex ? newIndex + 1 : newIndex
+                    )
+                }
+            },
+            onToggleExpand: {
+                // Input devices have no per-device detail to show —
+                // only output devices carry a volume-tier override.
+                guard !showingInputDevices else { return }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    expandedDeviceUID = (expandedDeviceUID == device.uid) ? nil : device.uid
+                }
+            },
+            onToggleHidden: {
+                if showingInputDevices {
+                    audioEngine.settingsManager.toggleInputDeviceHidden(uid: device.uid)
+                } else {
+                    audioEngine.settingsManager.toggleOutputDeviceHidden(uid: device.uid)
+                }
+            },
+            expandedContent: {
+                // Only render when actually expanded. Input devices skip
+                // the expand, so this is never hit for them.
+                if !showingInputDevices && expandedDeviceUID == device.uid {
+                    DeviceDetailSheet(
+                        device: device,
+                        transportType: device.id.readTransportType(),
+                        autoDetectedTier: deviceVolumeMonitor.autoDetectedOutputVolumeBackend(for: device.id),
+                        currentOverride: audioEngine.settingsManager.getDeviceVolumeTierOverride(for: device.uid),
+                        onOverrideChange: { newTier in
+                            audioEngine.settingsManager.setDeviceVolumeTierOverride(for: device.uid, to: newTier)
+                            deviceVolumeMonitor.applyTierOverrideChange(for: device.id)
+                        },
+                        onDismiss: {}
+                    )
+                }
+            }
+        )
+        .draggable(device.uid) {
+            Text(device.name)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .dropDestination(for: String.self) { droppedUIDs, _ in
+            guard let droppedUID = droppedUIDs.first,
+                  let fromIndex = editableDeviceOrder.firstIndex(where: { $0.uid == droppedUID }),
+                  let toIndex = editableDeviceOrder.firstIndex(where: { $0.uid == device.uid }),
+                  fromIndex != toIndex else { return false }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                editableDeviceOrder.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
+            }
+            return true
         }
     }
 
@@ -1041,18 +1137,23 @@ struct MenuBarPopupView: View {
 
     private func toggleDevicePriorityEdit() {
         if isEditingDevicePriority {
-            // Exiting edit mode: persist to the correct priority list
+            // Exiting edit mode: persist to the correct priority list and
+            // collapse any expanded device detail (the inline body only lives
+            // inside edit mode, so it must collapse when the mode does).
             persistEditableOrder()
             isEditingDevicePriority = false
+            expandedDeviceUID = nil
             if wasEditingInputDevices {
                 updateSortedInputDevices()
             } else {
                 updateSortedDevices()
             }
         } else {
-            // Entering edit mode: copy the current tab's sorted devices
+            // Entering edit mode: use the full (unfiltered) device list so hidden devices are also shown.
             wasEditingInputDevices = showingInputDevices
-            editableDeviceOrder = showingInputDevices ? sortedInputDevices : sortedDevices
+            editableDeviceOrder = showingInputDevices
+                ? audioEngine.prioritySortedInputDevices
+                : audioEngine.prioritySortedOutputDevices
             isEditingDevicePriority = true
         }
     }
@@ -1078,6 +1179,7 @@ struct MenuBarPopupView: View {
         guard isEditingDevicePriority else { return }
         persistEditableOrder()
         isEditingDevicePriority = false
+        expandedDeviceUID = nil
     }
 
     /// Merges device list changes into `editableDeviceOrder` while preserving the user's reordering.
@@ -1146,14 +1248,30 @@ struct MenuBarPopupView: View {
 
     // MARK: - Helpers
 
-    /// Recomputes sorted output devices using priority order
+    /// Recomputes sorted output devices, filtering hidden ones.
+    /// The current default output device is always kept visible even if hidden.
+    /// Falls back to the unfiltered list if the filter produces an empty
+    /// result — `defaultDeviceUID` can be briefly nil during device switchover
+    /// and we don't want the main view to show zero rows in that window.
     private func updateSortedDevices() {
-        sortedDevices = audioEngine.prioritySortedOutputDevices
+        let all = audioEngine.prioritySortedOutputDevices
+        let defaultUID = deviceVolumeMonitor.defaultDeviceUID
+        let filtered = all.filter { device in
+            device.uid == defaultUID || !audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
+        }
+        sortedDevices = filtered.isEmpty ? all : filtered
     }
 
-    /// Recomputes sorted input devices using priority order
+    /// Recomputes sorted input devices, filtering hidden ones.
+    /// The current default input device is always kept visible even if hidden.
+    /// Empty-filter fallback mirrors `updateSortedDevices`.
     private func updateSortedInputDevices() {
-        sortedInputDevices = audioEngine.prioritySortedInputDevices
+        let all = audioEngine.prioritySortedInputDevices
+        let defaultUID = deviceVolumeMonitor.defaultInputDeviceUID
+        let filtered = all.filter { device in
+            device.uid == defaultUID || !audioEngine.settingsManager.isInputDeviceHidden(device.uid)
+        }
+        sortedInputDevices = filtered.isEmpty ? all : filtered
     }
 
     /// Opens a file panel to import a ParametricEQ.txt for a device

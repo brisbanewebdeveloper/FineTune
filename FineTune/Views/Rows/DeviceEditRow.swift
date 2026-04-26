@@ -2,87 +2,160 @@
 import SwiftUI
 import AppKit
 
-/// Simplified device row for priority edit mode.
-/// Shows drag handle, priority number, device icon + name, and DEFAULT badge.
-struct DeviceEditRow: View {
+/// Priority-edit-mode row with drag handle, priority number, icon+name,
+/// DEFAULT badge, hide toggle, and an info/close button that expands the
+/// Device Inspector pane. Icon+name+badge is the only tap region for
+/// expand — siblings keep their own gestures.
+struct DeviceEditRow<ExpandedContent: View>: View {
     let device: AudioDevice
     let priorityIndex: Int
     let isDefault: Bool
     let isInputDevice: Bool
     let deviceCount: Int
+    let isExpanded: Bool
+    let isHidden: Bool
     let onReorder: (Int) -> Void
+    let onToggleExpand: () -> Void
+    let onToggleHidden: () -> Void
+    @ViewBuilder let expandedContent: () -> ExpandedContent
 
-    @State private var copied = false
+    @State private var isInfoButtonHovered = false
 
     var body: some View {
+        ExpandableGlassRow(isExpanded: isExpanded) {
+            headerRow
+                .opacity(isHidden && !isDefault ? 0.5 : 1.0)
+                .animation(.easeOut(duration: 0.2), value: isHidden)
+        } expandedContent: {
+            expandedContent()
+        }
+    }
+
+    private var infoButtonColor: Color {
+        if isExpanded {
+            return DesignTokens.Colors.interactiveActive
+        } else if isInfoButtonHovered {
+            return DesignTokens.Colors.interactiveHover
+        } else {
+            return DesignTokens.Colors.interactiveDefault
+        }
+    }
+
+    private var headerRow: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            // Drag handle
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(DesignTokens.Colors.textTertiary)
                 .frame(width: 16)
 
-            // Editable priority number
             EditablePriority(
                 index: priorityIndex,
                 count: deviceCount,
                 onReorder: onReorder
             )
 
-            // Device icon
-            Group {
-                if let icon = device.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    Image(systemName: isInputDevice ? "mic" : "speaker.wave.2")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.secondary)
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Group {
+                    if let icon = device.icon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        Image(systemName: isInputDevice ? "mic" : "speaker.wave.2")
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            }
-            .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+                .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
 
-            // Device name
-            Text(device.name)
-                .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(device.uid)
+                Text(device.name)
+                    .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                    .lineLimit(1)
+                    .help(device.uid)
 
-            // DEFAULT badge
-            if isDefault {
-                Text("DEFAULT")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(.white.opacity(0.1))
-                    )
-            }
-
-            // Copy UID button (always at far right)
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(device.uid, forType: .string)
-                copied = true
-                Task {
-                    try? await Task.sleep(for: .seconds(1.5))
-                    copied = false
+                if isDefault {
+                    Text("DEFAULT")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(.white.opacity(0.1))
+                        )
                 }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11))
-                    .foregroundStyle(copied ? .green : DesignTokens.Colors.textTertiary)
-                    .contentTransition(.symbolEffect(.replace))
+
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .help("Copy UID")
+            .contentShape(Rectangle())
+            .onTapGesture { onToggleExpand() }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(isExpanded ? "Collapse device details" : "Expand device details")
+
+            hideToggleButton
+
+            infoButton
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
-        .hoverableRow()
+    }
+
+    /// Eye / eye-slash toggle. Disabled for the current default device —
+    /// it stays visible while it's the default.
+    private var hideToggleButton: some View {
+        Button {
+            onToggleHidden()
+        } label: {
+            Image(systemName: isHidden ? "eye.slash" : "eye")
+                .font(.system(size: 11))
+                .foregroundStyle(
+                    isDefault
+                        ? DesignTokens.Colors.textTertiary.opacity(0.4)
+                        : (isHidden ? DesignTokens.Colors.mutedIndicator : DesignTokens.Colors.textTertiary)
+                )
+                .contentTransition(.symbolEffect(.replace))
+                .frame(
+                    minWidth: DesignTokens.Dimensions.minTouchTarget,
+                    minHeight: DesignTokens.Dimensions.minTouchTarget
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDefault)
+        .help(isDefault
+            ? "Cannot hide the default device"
+            : (isHidden ? "Show in main view" : "Hide from main view")
+        )
+        .accessibilityLabel(isHidden ? "Show in main view" : "Hide from main view")
+    }
+
+    private var infoButton: some View {
+        Button {
+            onToggleExpand()
+        } label: {
+            ZStack {
+                Image(systemName: "info.circle")
+                    .opacity(isExpanded ? 0 : 1)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                Image(systemName: "xmark")
+                    .opacity(isExpanded ? 1 : 0)
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            }
+            .font(.system(size: 12))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(infoButtonColor)
+            .frame(
+                minWidth: DesignTokens.Dimensions.minTouchTarget,
+                minHeight: DesignTokens.Dimensions.minTouchTarget
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isInfoButtonHovered = $0 }
+        .help(isExpanded ? "Close device inspector" : "Device inspector")
+        .accessibilityLabel(isExpanded ? "Close device inspector" : "Open device inspector")
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isExpanded)
+        .animation(DesignTokens.Animation.hover, value: isInfoButtonHovered)
     }
 }
 
@@ -215,5 +288,55 @@ private struct PriorityFrameKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
         value = nextValue()
+    }
+}
+
+// MARK: - Previews
+
+#Preview("DeviceEditRow Tap Carveout") {
+    DeviceEditRowTapCarveoutPreview()
+}
+
+struct DeviceEditRowTapCarveoutPreview: View {
+    @State private var lastEvent: String = "Tap anywhere to test"
+    @State private var expandedUID: String?
+
+    var body: some View {
+        PreviewContainer {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                Text(lastEvent)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+                DeviceEditRow(
+                    device: MockData.sampleDevices[0],
+                    priorityIndex: 0,
+                    isDefault: true,
+                    isInputDevice: false,
+                    deviceCount: 3,
+                    isExpanded: expandedUID == MockData.sampleDevices[0].uid,
+                    isHidden: false,
+                    onReorder: { newIndex in
+                        lastEvent = "Reorder to \(newIndex + 1)"
+                    },
+                    onToggleExpand: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            let uid = MockData.sampleDevices[0].uid
+                            expandedUID = (expandedUID == uid) ? nil : uid
+                            lastEvent = "Toggled expand → \(expandedUID ?? "nil")"
+                        }
+                    },
+                    onToggleHidden: {
+                        lastEvent = "Toggle hidden"
+                    },
+                    expandedContent: {
+                        Text("Expanded detail content here")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .padding(.vertical, DesignTokens.Spacing.xs)
+                    }
+                )
+            }
+        }
     }
 }

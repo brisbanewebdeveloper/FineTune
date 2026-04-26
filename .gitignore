@@ -3,6 +3,8 @@ docs/
 CLAUDE.md
 .claude/
 .history/
+.omc/
+.omc-plugin/
 
 # Git worktrees
 .worktrees/
@@ -12,8 +14,9 @@ build/
 DerivedData/
 tools/
 *.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+Makefile
+xcodemake*.log
 
 # Tests (excluded from v1.0)
 FineTuneTests/*
